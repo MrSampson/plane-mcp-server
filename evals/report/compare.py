@@ -5,12 +5,43 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .economics import economics_statement
 from .load import ResultRow, RunKeyValidation
 from .off_surface import off_surface_statement
 from .schema_friction import measure_schema_friction, schema_friction_statement, successful_trace_rows
 from .statistics import median, paired_bootstrap_mean_ci, paired_permutation_pvalue
 from .summary import completeness_statement, execution_coverage_statement, summarize
 from .table import format_number
+
+
+def _paired_metric(
+    economics_a: Any,
+    economics_b: Any,
+    shared: list[str],
+    attribute: str,
+) -> dict[str, Any]:
+    """Pair one per-task resource metric across arms, skipping tasks either side lacks.
+
+    Same shape as the call delta -- mean, median and a paired bootstrap -- so the
+    resource lines read against it directly rather than in different units.
+    """
+    deltas: list[float] = []
+    for task_id in shared:
+        task_a = economics_a.tasks.get(task_id)
+        task_b = economics_b.tasks.get(task_id)
+        if task_a is None or task_b is None:
+            continue
+        value_a = getattr(task_a, attribute)
+        value_b = getattr(task_b, attribute)
+        if value_a is None or value_b is None:
+            continue
+        deltas.append(float(value_b) - float(value_a))
+    return {
+        "n": len(deltas),
+        "mean_delta": sum(deltas) / len(deltas) if deltas else None,
+        "median_delta": median(deltas),
+        "ci": paired_bootstrap_mean_ci(deltas),
+    }
 
 
 def ab_compare(
@@ -104,10 +135,32 @@ def ab_compare(
             }
         )
 
+    # Resource deltas over the same shared tasks as the call delta. Fewer calls and
+    # less spend are different virtues, and reporting one without the other is what
+    # let a 32%-fewer-calls arm read as the cheaper one while burning 3.1x the input.
+    economics_a, economics_b = summary_a.economics, summary_b.economics
+    paired_resources = {
+        name: _paired_metric(economics_a, economics_b, shared, attribute)
+        for name, attribute in (
+            ("input", "med_total_input"),
+            ("result_tokens", "med_result_tokens"),
+            ("wall_time", "med_wall_time_s"),
+            ("call_latency", "med_call_latency_ms"),
+            ("cost", "cost_usd"),
+        )
+    }
+
     return {
         "summary_a": summary_a,
         "summary_b": summary_b,
         "paired_tasks": per_task,
+        "economics_a": economics_a,
+        "economics_b": economics_b,
+        "total_input_a": economics_a.total_input_tokens,
+        "total_input_b": economics_b.total_input_tokens,
+        "cost_a": economics_a.cost_usd,
+        "cost_b": economics_b.cost_usd,
+        "paired_resources": paired_resources,
         "mean_delta": sum(deltas) / len(deltas) if deltas else None,
         "median_delta": median(deltas),
         "call_permutation_p": paired_permutation_pvalue(deltas),
@@ -151,6 +204,49 @@ def ab_compare(
             "task_n": sum(task.n > 0 for task in summary_b.tasks.values()),
         },
     }
+
+
+#: Label, units and precision for each paired resource delta.
+_RESOURCE_LINES: tuple[tuple[str, str, str, int], ...] = (
+    ("input", "input tokens", "", 0),
+    ("result_tokens", "result tokens", "", 0),
+    ("cost", "cost", "$", 4),
+    ("wall_time", "wall time", "s", 1),
+    ("call_latency", "call latency", "ms", 0),
+)
+
+
+def _print_resource_deltas(comparison: dict[str, Any]) -> None:
+    """Print the resource deltas beside the call delta, in the same paired shape.
+
+    These sit immediately after the call delta on purpose: the call delta alone says
+    which arm did less work, which is not the same question as which arm cost less,
+    and the two answers pointed opposite ways on the run that motivated this.
+    """
+    paired = comparison.get("paired_resources") or {}
+    for key, label, unit, places in _RESOURCE_LINES:
+        metric = paired.get(key)
+        if not metric or not metric["n"]:
+            print(f"  median {label} delta (B−A): n/a (no paired tasks reporting it)")
+            continue
+        low, high = metric["ci"]
+        prefix = unit if unit == "$" else ""
+        suffix = "" if unit == "$" else unit
+        interval = (
+            f" paired-bootstrap95 [{prefix}{low:+,.{places}f}{suffix},{prefix}{high:+,.{places}f}{suffix}]"
+            if low is not None and high is not None
+            else ""
+        )
+        print(
+            f"  median {label} delta (B−A): {prefix}{metric['median_delta']:+,.{places}f}{suffix}"
+            f"{interval} (n={metric['n']} tasks)"
+        )
+    for label, key in (("A", "economics_a"), ("B", "economics_b")):
+        economics = comparison.get(key)
+        if economics is None:
+            continue
+        for line in economics_statement(economics).splitlines():
+            print(f"  {label} {line}")
 
 
 def print_ab_report(comparison: dict[str, Any], path_a: Path, path_b: Path) -> None:
@@ -222,6 +318,7 @@ def print_ab_report(comparison: dict[str, Any], path_a: Path, path_b: Path) -> N
             f"paired-bootstrap95 [{rate_lo * 100:+.1f},{rate_hi * 100:+.1f}] "
             f"(n={comparison['n_paired_errored_call_rates']} tasks)"
         )
+    _print_resource_deltas(comparison)
     multiple_repetitions = bool(comparison.get("multi_rep"))
     if comparison["paired_tasks"]:
         print()

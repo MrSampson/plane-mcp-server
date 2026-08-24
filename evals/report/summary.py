@@ -10,6 +10,7 @@ from evals.core.results import TRACE_INTEGRITY_SCHEMA_VERSION, TaskResult
 from evals.core.task_metadata import TaskMetadata, entry_needs, task_metadata_from_rows
 from evals.skip_taxonomy import is_expected_environment_capability_skip, skip_reason_family
 
+from .economics import EconomicsMeasurement, measure_economics
 from .load import ResultRow, RunKeyValidation, is_infra_error_row, is_meta_row, read_result
 from .off_surface import OffSurfaceMeasurement, measure_off_surface
 from .schema_friction import SchemaFrictionMeasurement, measure_schema_friction
@@ -89,6 +90,7 @@ class Summary:
     result_tokens_mode: ResultTokensMode
     off_surface: OffSurfaceMeasurement
     schema_friction: SchemaFrictionMeasurement
+    economics: EconomicsMeasurement
 
     @property
     def complete(self) -> bool:
@@ -385,4 +387,5 @@ def summarize(
         result_tokens_mode=result_tokens_mode([row for task_results in by_task.values() for row in task_results]),
         off_surface=measure_off_surface(rows, task_catalog=task_metadata or None),
         schema_friction=measure_schema_friction(rows),
+        economics=measure_economics(rows),
     )
