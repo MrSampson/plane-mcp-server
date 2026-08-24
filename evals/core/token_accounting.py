@@ -76,6 +76,29 @@ def _family_semantics(model: str | None) -> str | None:
     return None
 
 
+#: The fields that carry an actual measurement, as opposed to describing one.
+_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+    "total_input_tokens_including_cache",
+)
+
+
+def has_token_counts(usage_total: Mapping[str, Any] | None) -> bool:
+    """True when this usage carries a real measurement rather than only metadata.
+
+    The api driver writes a ``usage_total`` on every run whether or not any turn
+    reported usage, so a dict holding a ``source`` and a ``cache_semantics`` and no
+    counts is routine. Pricing that at $0.00 is the "unknown reads as free" failure
+    this module exists to prevent, so an all-zero shape counts as no measurement.
+    """
+    if not usage_total:
+        return False
+    return any(_int(usage_total, name) for name in _TOKEN_FIELDS)
+
+
 def cache_semantics_of(usage_total: Mapping[str, Any] | None, *, model: str | None = None) -> str | None:
     """Return how this row's ``input_tokens`` treats cache, or None if undecidable."""
     if not usage_total:
@@ -102,7 +125,7 @@ def normalize_usage(
     means the driver recorded no usage at all (report it as unmeasured), while a
     populated one means the shape could not be read (report it as unpriced).
     """
-    if not usage_total:
+    if not usage_total or not has_token_counts(usage_total):
         return None
 
     cached = _int(usage_total, "cache_read_input_tokens")
@@ -132,12 +155,15 @@ def normalize_usage(
         total = reported_input
         uncached = total - cached - creation
 
-    if source == "explicit_total":
+    if explicit_total is not None and total != _int(usage_total, "total_input_tokens_including_cache"):
         # The vendor states the total as well as the parts. Both agreeing is what makes
         # this shape self-validating; disagreement means the shape changed underneath us,
         # and an unpriced row is a visible failure where a wrong price is not.
-        if total != _int(usage_total, "total_input_tokens_including_cache"):
-            return None
+        #
+        # Checked whenever a total is present, not only when it chose the semantics: a
+        # declaration may interpret the parts, but it does not get to overrule
+        # arithmetic that contradicts it.
+        return None
 
     if uncached < 0:
         # An inclusive reading whose cache exceeds its total is not a reading at all.

@@ -838,9 +838,7 @@ def _openai_backend_preserves_malformed_arguments():
             {
                 "model": "gpt",
                 "status": "completed",
-                "output": [
-                    {"type": "function_call", "call_id": "c1", "name": "lookup", "arguments": "{not json"}
-                ],
+                "output": [{"type": "function_call", "call_id": "c1", "name": "lookup", "arguments": "{not json"}],
                 "usage": None,
             }
         ]

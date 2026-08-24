@@ -48,6 +48,21 @@ from evals.drivers.api.base import (
 
 DEFAULT_MAX_TOKENS = 8192
 
+
+def cache_semantics_for(backend: Any) -> str | None:
+    """Return how this backend's input_tokens treats cache, or None if it never said.
+
+    Defaulting an undeclared backend to either answer is a guess, and a guess written
+    down as a declaration is worse than no record: it outranks every other signal in
+    token_accounting. A registered extension that omits the attribute therefore
+    records nothing, and inference resolves it downstream -- or refuses.
+    """
+    declared = getattr(backend, "input_tokens_include_cache", None)
+    if declared is None:
+        return None
+    return INCLUSIVE if declared else EXCLUSIVE
+
+
 McpSessionFactory = Callable[[StdioServerParameters], Any]
 
 
@@ -420,8 +435,10 @@ class ApiDriver:
             # the cached reads, and both arrive here as source "iterations". Recording
             # which one this was is the difference between pricing a run and guessing
             # at it from the model name.
-            "cache_semantics": (INCLUSIVE if getattr(backend, "input_tokens_include_cache", False) else EXCLUSIVE),
         }
+        semantics = cache_semantics_for(backend)
+        if semantics is not None:
+            usage_total["cache_semantics"] = semantics
         if manifest_state["stale"]:
             tool_manifest_fingerprint = None
         return AgentRun(

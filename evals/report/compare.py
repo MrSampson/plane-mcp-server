@@ -40,6 +40,9 @@ def _paired_metric(
         deltas.append(float(value_b) - float(value_a))
     return {
         "n": len(deltas),
+        # Missingness that correlates with expensive tasks can bias a delta, so the
+        # count of shared tasks this metric could not use travels with it.
+        "dropped": len(shared) - len(deltas),
         "mean_delta": sum(deltas) / len(deltas) if deltas else None,
         "median_delta": median(deltas),
         "ci": paired_bootstrap_mean_ci(deltas),
@@ -212,7 +215,7 @@ def ab_compare(
 _RESOURCE_LINES: tuple[tuple[str, str, str, int], ...] = (
     ("input", "input tokens", "", 0),
     ("result_tokens", "result tokens", "", 0),
-    ("cost", "cost", "$", 4),
+    ("cost", "cost per successful rep", "$", 4),
     ("wall_time", "wall time", "s", 1),
     ("call_latency", "call latency", "ms", 0),
 )
@@ -231,6 +234,8 @@ def _print_resource_deltas(comparison: dict[str, Any]) -> None:
         if not metric or not metric["n"]:
             print(f"  median {label} delta (B−A): n/a (no paired tasks reporting it)")
             continue
+        dropped = metric.get("dropped") or 0
+        omitted = f", {dropped} shared task(s) omitted for missing values" if dropped else ""
         low, high = metric["ci"]
         prefix = unit if unit == "$" else ""
         suffix = "" if unit == "$" else unit
@@ -241,7 +246,7 @@ def _print_resource_deltas(comparison: dict[str, Any]) -> None:
         )
         print(
             f"  median {label} delta (B−A): {prefix}{metric['median_delta']:+,.{places}f}{suffix}"
-            f"{interval} (n={metric['n']} tasks)"
+            f"{interval} (n={metric['n']} tasks{omitted})"
         )
     for label, key in (("A", "economics_a"), ("B", "economics_b")):
         economics = comparison.get(key)

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from evals.core.pricing import PRICED, PRICES_AS_OF, UNMEASURED, UNPRICED, price_usage
 from evals.core.results import TaskResult
-from evals.core.token_accounting import normalize_usage
+from evals.core.token_accounting import has_token_counts, normalize_usage
 
 from .load import ResultRow, is_infra_error_row, is_meta_row, read_result
 from .schema_friction import successful_trace_rows
@@ -43,6 +43,7 @@ class TaskEconomics:
     med_wall_time_s: float | None
     med_call_latency_ms: float | None
     cost_usd: float | None
+    """Mean billed cost per successful repetition -- not a total, unlike the arm figure."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,34 +55,67 @@ class EconomicsMeasurement:
     total_result_tokens: int
     total_wall_time_s: float
     cost_usd: float | None
+    computed_cost_usd: float | None
     vendor_cost_usd: float | None
     cost_outcome: str
     priced_rows: int
     unpriced_rows: int
     unmeasured_rows: int
+    missing_input_rows: int
     med_call_latency_ms: float | None
     p95_call_latency_ms: float | None
     prices_as_of: str = PRICES_AS_OF
 
     @property
+    def cost_drift_usd(self) -> float | None:
+        """How far the price table sits from what the vendor said it charged.
+
+        None when no vendor reported a figure, which is most runs.
+        """
+        if self.computed_cost_usd is None or self.vendor_cost_usd is None:
+            return None
+        return self.computed_cost_usd - self.vendor_cost_usd
+
+    @property
     def cost_text(self) -> str:
-        """Never render an unknown cost as a number."""
-        if self.cost_outcome == UNMEASURED or self.cost_usd is None:
+        """Never render an unknown cost as a number, or a real one as zero."""
+        if self.cost_usd is None:
             return UNMEASURED if self.cost_outcome == UNMEASURED else UNPRICED
-        text = f"${self.cost_usd:,.3f}"
+        # A run that really cost a fraction of a cent must not print $0.000; that is
+        # the same "reads as free" mistake in a different disguise.
+        text = "<$0.001" if 0 < self.cost_usd < 0.001 else f"${self.cost_usd:,.3f}"
         if self.unpriced_rows or self.unmeasured_rows:
             text += f" (+{self.unpriced_rows} unpriced, {self.unmeasured_rows} unmeasured rows)"
         return text
 
+    @property
+    def input_text(self) -> str:
+        """The input total, saying so when it does not cover every row."""
+        if self.total_input_tokens is None:
+            return UNMEASURED
+        text = f"{self.total_input_tokens:,}"
+        if self.missing_input_rows:
+            text += f" (excludes {self.missing_input_rows} row(s) with unreadable usage)"
+        return text
 
-def _executed_rows(rows: list[ResultRow]) -> list[TaskResult]:
-    executed: list[TaskResult] = []
+
+def _charged_rows(rows: list[ResultRow]) -> list[TaskResult]:
+    """Every row whose model actually ran, including ones that later went wrong.
+
+    A verifier crash, a contained timeout or a post-run skip happens after the tokens
+    were spent, so excluding those rows understates an arm and hides the spend
+    entirely -- it was not even counted as unmeasured. A row that carries usage is
+    kept regardless of how it ended; one that never ran is not.
+    """
+    charged: list[TaskResult] = []
     for raw_row in rows:
         row = read_result(raw_row)
-        if is_meta_row(row) or is_infra_error_row(row) or row.error or row.skipped:
+        if is_meta_row(row) or is_infra_error_row(row):
             continue
-        executed.append(row)
-    return executed
+        if (row.error or row.skipped) and not has_token_counts(row.usage_total):
+            continue
+        charged.append(row)
+    return charged
 
 
 def _row_input_tokens(row: TaskResult) -> int | None:
@@ -95,11 +129,15 @@ def _call_latencies(rows: list[TaskResult]) -> list[float]:
 
 def measure_economics(rows: list[ResultRow]) -> EconomicsMeasurement:
     """Total an arm's cost and volume, and break it down per task."""
-    executed = _executed_rows(rows)
+    executed = _charged_rows(rows)
 
     total_input = 0
     saw_input = False
-    cost_total = 0.0
+    missing_input = 0
+    billed_total = 0.0
+    saw_billed = False
+    computed_total = 0.0
+    saw_computed = False
     vendor_total = 0.0
     saw_vendor = False
     priced = unpriced = unmeasured = 0
@@ -108,26 +146,34 @@ def measure_economics(rows: list[ResultRow]) -> EconomicsMeasurement:
         if tokens is not None:
             total_input += tokens
             saw_input = True
+        else:
+            missing_input += 1
         cost = price_usage(row.usage_total, model=row.model)
         if cost.outcome == PRICED:
             priced += 1
-            if cost.billed_usd is not None:
-                cost_total += cost.billed_usd
         elif cost.outcome == UNPRICED:
             unpriced += 1
         else:
             unmeasured += 1
+        # Billed is what to report; computed is the table's own opinion, kept apart so
+        # the drift check compares the table against the vendor rather than the vendor
+        # against itself. Billed accrues on any row that has a figure, so an
+        # authoritative vendor cost survives a model the table cannot price.
+        if cost.billed_usd is not None:
+            billed_total += cost.billed_usd
+            saw_billed = True
+        if cost.usd is not None:
+            computed_total += cost.usd
+            saw_computed = True
         if cost.vendor_usd is not None:
             vendor_total += cost.vendor_usd
             saw_vendor = True
 
-    if priced == 0:
-        # No priced row at all: say which kind of nothing this is.
+    if not saw_billed:
+        # Nothing to report: say which kind of nothing it is.
         outcome = UNMEASURED if unpriced == 0 else UNPRICED
-    elif unpriced or unmeasured:
-        outcome = PRICED  # partial, and the counts are carried alongside
     else:
-        outcome = PRICED
+        outcome = PRICED  # possibly partial; the counts travel alongside
 
     by_task: dict[str, list[TaskResult]] = defaultdict(list)
     for row in successful_trace_rows(rows):
@@ -155,8 +201,10 @@ def measure_economics(rows: list[ResultRow]) -> EconomicsMeasurement:
         total_input_tokens=total_input if saw_input else None,
         total_result_tokens=sum(row.total_result_tokens for row in executed),
         total_wall_time_s=sum(float(row.wall_time_s) for row in executed),
-        cost_usd=cost_total if priced else None,
+        cost_usd=billed_total if saw_billed else None,
+        computed_cost_usd=computed_total if saw_computed else None,
         vendor_cost_usd=vendor_total if saw_vendor else None,
+        missing_input_rows=missing_input,
         cost_outcome=outcome,
         priced_rows=priced,
         unpriced_rows=unpriced,
@@ -168,7 +216,7 @@ def measure_economics(rows: list[ResultRow]) -> EconomicsMeasurement:
 
 def economics_statement(measurement: EconomicsMeasurement) -> str:
     """One block naming cost, volume and latency, with unknowns named as unknowns."""
-    input_text = f"{measurement.total_input_tokens:,}" if measurement.total_input_tokens is not None else UNMEASURED
+    input_text = measurement.input_text
     latency = measurement.med_call_latency_ms
     p95 = measurement.p95_call_latency_ms
     latency_text = f"{latency:,.0f}ms median / {p95:,.0f}ms p95" if latency is not None and p95 is not None else "n/a"
@@ -177,10 +225,16 @@ def economics_statement(measurement: EconomicsMeasurement) -> str:
         f"input tokens={input_text}; result tokens={measurement.total_result_tokens:,}",
         f"  wall time={measurement.total_wall_time_s:,.0f}s; call latency {latency_text}",
     ]
-    if measurement.vendor_cost_usd is not None and measurement.cost_usd is not None:
-        # The only standing check that the price table has not gone stale.
-        drift = measurement.cost_usd - measurement.vendor_cost_usd
-        lines.append(f"  vendor-reported cost=${measurement.vendor_cost_usd:,.3f}; table differs by ${drift:+,.3f}")
+    drift = measurement.cost_drift_usd
+    if drift is not None and measurement.vendor_cost_usd is not None:
+        # The only standing check that the price table has not gone stale, so it has to
+        # compare the table's own figure against the vendor's -- not the reported cost,
+        # which already prefers the vendor and would always agree with itself.
+        lines.append(
+            f"  vendor-reported cost=${measurement.vendor_cost_usd:,.3f}; "
+            f"price table computes ${measurement.computed_cost_usd:,.3f} "
+            f"(differs by ${drift:+,.3f})"
+        )
     lines.append(f"  {COST_LIMITATION}")
     return "\n".join(lines)
 

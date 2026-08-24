@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from evals.core.token_accounting import normalize_usage
+from evals.core.token_accounting import has_token_counts, normalize_usage
 
 #: The day the rates below were last checked against published pricing.
 PRICES_AS_OF = "2026-08-24"
@@ -95,7 +95,13 @@ def resolve_model_id(usage_total: Mapping[str, Any] | None, *, model: str | None
     """
     if usage_total:
         model_usage = usage_total.get("modelUsage")
-        if isinstance(model_usage, Mapping) and len(model_usage) == 1:
+        if isinstance(model_usage, Mapping) and model_usage:
+            if len(model_usage) > 1:
+                # Several models produced this run and the counters are already summed,
+                # so no single rate is correct for them. Falling back to the row alias
+                # would price Opus tokens at the Haiku rate whenever that alias happened
+                # to be priceable.
+                return None
             only = next(iter(model_usage))
             if isinstance(only, str) and only:
                 return only
@@ -114,7 +120,8 @@ def lookup_price(model_id: str | None) -> ModelPrice | None:
 
 def price_usage(usage_total: Mapping[str, Any] | None, *, model: str | None = None) -> RowCost:
     """Price one row's ``usage_total``."""
-    if not usage_total:
+    if not usage_total or not has_token_counts(usage_total):
+        # A usage dict with no counts in it is metadata, not a measurement.
         return RowCost(outcome=UNMEASURED, usd=None, model_id=model or None)
 
     vendor = usage_total.get("total_cost_usd")
