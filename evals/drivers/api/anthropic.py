@@ -85,6 +85,15 @@ class AnthropicBackend:
             "max_tokens": self.max_tokens,
             "messages": self.messages,
             "tools": self.tools,
+            # Automatic caching: one top-level field, and the breakpoint advances on its own as
+            # the conversation grows. Anthropic caching is opt-in where OpenAI's Responses API
+            # caches unasked, and this loop resends the whole tool surface plus the accumulated
+            # transcript on every turn -- the measured OpenAI arm reads 88% of its input from
+            # cache, so without this an Anthropic arm pays full price for the same shape. It also
+            # made cost differences between the two providers read as pricing rather than as a
+            # missing field. A cache read is 0.1x input and a 5m write 1.25x, so this pays for
+            # itself on the second turn of any task.
+            "cache_control": {"type": "ephemeral"},
         }
         if self.system is not None:
             request["system"] = self.system

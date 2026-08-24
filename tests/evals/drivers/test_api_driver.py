@@ -704,6 +704,35 @@ def test_openai_backend_derives_stop_reason_from_status(status, incomplete_reaso
     assert turn.provider_stop_reason == (incomplete_reason or status)
 
 
+def test_anthropic_backend_requests_automatic_prompt_caching():
+    """Every turn resends the whole tool surface plus the transcript, so caching is not optional.
+
+    Anthropic caching is opt-in where OpenAI's Responses API caches unasked. Without this field
+    an Anthropic arm paid full input price on content the measured OpenAI arm read 88% of from
+    cache, which made a provider cost comparison read as pricing rather than a missing field.
+    """
+    responses = [
+        {
+            "model": "claude-actual",
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "done"}],
+            "usage": {"input_tokens": 5, "output_tokens": 1},
+        }
+    ]
+    messages = FakeAnthropicMessages(responses)
+    backend = AnthropicBackend("claude", max_tokens=10, client=SimpleNamespace(messages=messages))
+    tool = ToolSpec("lookup", "Look up", {"type": "object", "properties": {}})
+    backend.start("system", "prompt", [tool])
+
+    backend.next_turn()
+
+    request = messages.requests[0]
+    # Top level, not on a content block: that is the automatic form, where the breakpoint
+    # advances by itself as the conversation grows.
+    assert request["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in request["messages"][0]
+
+
 def _openai_backend_translates_tools_calls_and_outputs():
     responses = [
         {
