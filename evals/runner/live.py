@@ -30,6 +30,12 @@ from evals.tasks.prompts import PromptBindError, format_task_prompt
 from .meta import make_run_meta_row, maybe_write_run_meta, read_git_revision
 from .resume import load_resume_skip_keys
 
+# Only the API driver enforces this: CLI drivers are handed max_turns and discard it (the
+# antigravity driver says so outright -- "no turn-cap flag"), so their vendor loop decides.
+# A cap that binds therefore biases API arms against CLI arms of the same model rather than
+# limiting both, and 15 does bind: codex spent 18 calls on W6 in a CLI arm, so tasks in this
+# battery legitimately need more. Kept as the default so no existing run changes, and made
+# settable so a cross-driver comparison can lift it out of the way and say it did.
 MAX_ITERATIONS = 15
 MAX_TOKENS = 8192
 
@@ -89,6 +95,7 @@ async def run_agent_task_via_driver(
     workspace_slug: str,
     server_env: dict[str, str] | None = None,
     artifact_dir: Path | None = None,
+    max_iterations: int = MAX_ITERATIONS,
 ) -> TaskResult:
     """Run one task through the selected driver."""
     project_name = ctx["project_name"]
@@ -102,7 +109,7 @@ async def run_agent_task_via_driver(
         prompt,
         mcp_env,
         model_id,
-        MAX_ITERATIONS,
+        max_iterations,
         system=system,
         cwd=Path(__file__).resolve().parent.parent.parent,
         evidence_sentinels=ctx.get("evidence_sentinels"),
@@ -227,6 +234,7 @@ async def _drive_agent(
     repetition: int,
     is_api_driver: bool,
     artifact_dir: Path,
+    max_iterations: int = MAX_ITERATIONS,
 ) -> TaskResult | None:
     """Run the agent and classify launch or prompt failures."""
     # Agent wrap: API failures and CLI failures are infrastructure.
@@ -240,6 +248,7 @@ async def _drive_agent(
             workspace_slug=workspace_slug,
             server_env=server_env,
             artifact_dir=artifact_dir,
+            max_iterations=max_iterations,
         )
     except PromptBindError as exc:
         # Empty/missing seed IDs in the prompt — not an agent failure.
@@ -482,6 +491,7 @@ async def _run_task_repetition(
     external: bool,
     server_env: dict[str, str] | None,
     artifact_dir: Path,
+    max_iterations: int = MAX_ITERATIONS,
 ) -> TaskResult:
     """Seed, drive, verify, assemble, and remove one task repetition."""
     context: dict[str, Any] = {}
@@ -513,6 +523,7 @@ async def _run_task_repetition(
                 repetition=repetition,
                 is_api_driver=is_api_driver,
                 artifact_dir=artifact_dir,
+                max_iterations=max_iterations,
             )
             if agent is not None:
                 _apply_agent_run(
@@ -565,6 +576,7 @@ async def run_live(
     resume: bool = False,
     record_result_payloads: bool = False,
     resolved_model_id: str | None = None,
+    max_iterations: int = MAX_ITERATIONS,
 ) -> int:
     label = (label or "local").strip() or "local"
     external = server_cmd is not None
@@ -688,6 +700,7 @@ async def run_live(
                     external=external,
                     server_env=server_env,
                     artifact_dir=artifact_dir,
+                    max_iterations=max_iterations,
                 )
                 file.write(json.dumps(row.to_row(), default=str) + "\n")
                 file.flush()

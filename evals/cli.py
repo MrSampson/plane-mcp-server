@@ -148,6 +148,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "(off by default; sidecars and rows may contain live workspace data)"
         ),
     )
+    p.add_argument(
+        "--max-iterations",
+        type=int,
+        default=None,
+        help=(
+            "API driver only: cap on agent loop iterations (default 15). CLI drivers discard "
+            "this and let their own loop decide, so a cap that binds penalises only the API "
+            "side; raise it when comparing an API arm against a CLI arm of the same model."
+        ),
+    )
     p.add_argument("--out", type=str, default=None, help="JSONL output path")
     p.add_argument(
         "--resume",
@@ -307,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
             server_env=server_env or None,
             resume=bool(args.resume),
             record_result_payloads=bool(args.record_result_payloads),
+            **({"max_iterations": args.max_iterations} if args.max_iterations else {}),
             resolved_model_id=model_id,
         )
     )
