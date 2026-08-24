@@ -94,6 +94,8 @@ class OpenAIBackend:
     """
 
     provider = "openai"
+    # Responses counts cached reads inside input_tokens; cached_tokens is a subset of it.
+    input_tokens_include_cache = True
 
     def __init__(self, model: str, *, max_tokens: int, client: Any | None = None) -> None:
         if client is None:

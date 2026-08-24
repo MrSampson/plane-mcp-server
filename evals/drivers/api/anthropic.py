@@ -49,6 +49,8 @@ class AnthropicBackend:
     """Stateful adapter over stable ``client.messages.create`` calls."""
 
     provider = "anthropic"
+    # Messages reports input_tokens net of both cache fields, so the three add up.
+    input_tokens_include_cache = False
 
     def __init__(self, model: str, *, max_tokens: int, client: Any | None = None) -> None:
         if client is None:

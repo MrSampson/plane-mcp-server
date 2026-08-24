@@ -84,6 +84,12 @@ class ModelBackend(Protocol):
     actual_model: str
     client: Any
 
+    #: Whether this provider's ``usage.input_tokens`` already contains cached reads.
+    #: The two providers disagree, and the driver records the answer on every run so
+    #: cost analysis never has to infer it from a model name. See
+    #: ``evals.core.token_accounting``.
+    input_tokens_include_cache: bool
+
     def start(self, system: str | None, prompt: str, tools: list[ToolSpec]) -> None: ...
 
     def next_turn(self) -> Turn: ...

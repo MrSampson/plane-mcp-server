@@ -34,6 +34,7 @@ from evals.core.evidence import (
     observed_sentinel_labels,
 )
 from evals.core.results import AgentRun, Usage
+from evals.core.token_accounting import EXCLUSIVE, INCLUSIVE
 from evals.core.token_counting import TOKEN_ESTIMATE_METHOD, estimate_result_tokens
 from evals.core.tool_manifest import ToolManifestCapture, tools_page
 from evals.drivers.api.base import (
@@ -415,6 +416,11 @@ class ApiDriver:
             "cache_read_input_tokens": total_cache_read_input_tokens,
             "cache_creation_input_tokens": total_cache_creation_input_tokens,
             "source": "iterations",
+            # Anthropic and OpenAI disagree about whether input_tokens already contains
+            # the cached reads, and both arrive here as source "iterations". Recording
+            # which one this was is the difference between pricing a run and guessing
+            # at it from the model name.
+            "cache_semantics": (INCLUSIVE if getattr(backend, "input_tokens_include_cache", False) else EXCLUSIVE),
         }
         if manifest_state["stale"]:
             tool_manifest_fingerprint = None
