@@ -135,7 +135,10 @@ class FakeAnthropicMessages:
         return self.responses.popleft()
 
 
-class FakeOpenAICompletions:
+class FakeOpenAIResponses:
+    """Stands in for ``client.responses``. Deep-copies each request, because the backend
+    appends the model's own output items to the same input list it sends."""
+
     def __init__(self, responses: list[dict[str, Any]]) -> None:
         self.responses = deque(responses)
         self.requests: list[dict[str, Any]] = []
@@ -143,6 +146,10 @@ class FakeOpenAICompletions:
     def create(self, **kwargs):
         self.requests.append(copy.deepcopy(kwargs))
         return self.responses.popleft()
+
+
+def openai_client(responses: FakeOpenAIResponses) -> SimpleNamespace:
+    return SimpleNamespace(responses=responses)
 
 
 def test_registered_third_party_backend_runs_without_driver_changes():
@@ -666,77 +673,67 @@ def test_anthropic_backend_translates_tools_turns_and_results():
 
 
 @pytest.mark.parametrize(
-    ("raw_reason", "expected"),
+    ("status", "incomplete_reason", "expected"),
     [
-        ("stop", StopReason.END_TURN),
-        ("tool_calls", StopReason.TOOL_USE),
-        ("length", StopReason.MAX_TOKENS),
-        ("content_filter", StopReason.REFUSAL),
-        ("future_reason", StopReason.UNKNOWN),
+        ("completed", None, StopReason.END_TURN),
+        ("incomplete", "max_output_tokens", StopReason.MAX_TOKENS),
+        ("incomplete", "content_filter", StopReason.REFUSAL),
+        ("failed", None, StopReason.UNKNOWN),
+        ("queued", None, StopReason.UNKNOWN),
     ],
 )
-def test_openai_backend_normalizes_and_preserves_stop_reason(raw_reason, expected):
-    completions = FakeOpenAICompletions(
+def test_openai_backend_derives_stop_reason_from_status(status, incomplete_reason, expected):
+    """Responses has no finish_reason: the outcome is status plus what the turn emitted."""
+    responses = FakeOpenAIResponses(
         [
             {
                 "model": "gpt",
-                "choices": [
-                    {
-                        "finish_reason": raw_reason,
-                        "message": {"content": "done", "tool_calls": []},
-                    }
-                ],
+                "status": status,
+                "incomplete_details": ({"reason": incomplete_reason} if incomplete_reason else None),
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "done"}]}],
                 "usage": None,
             }
         ]
     )
-    backend = OpenAIBackend(
-        "gpt",
-        max_tokens=10,
-        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
-    )
+    backend = OpenAIBackend("gpt", max_tokens=10, client=openai_client(responses))
     backend.start(None, "prompt", [])
 
     turn = backend.next_turn()
 
     assert turn.stop_reason is expected
-    assert turn.provider_stop_reason == raw_reason
+    assert turn.provider_stop_reason == (incomplete_reason or status)
 
 
-def _openai_backend_translates_tools_calls_and_tool_messages():
+def _openai_backend_translates_tools_calls_and_outputs():
     responses = [
         {
             "model": "gpt-actual",
-            "choices": [
+            "status": "completed",
+            "output": [
+                {"type": "reasoning", "id": "rs-1", "summary": []},
                 {
-                    "finish_reason": "tool_calls",
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "call-1",
-                                "type": "function",
-                                "function": {"name": "lookup", "arguments": '{"q":"x"}'},
-                            }
-                        ],
-                    },
-                }
+                    "type": "function_call",
+                    "id": "fc-1",
+                    "call_id": "call-1",
+                    "name": "lookup",
+                    "arguments": '{"q":"x"}',
+                },
             ],
             "usage": {
-                "prompt_tokens": 12,
-                "completion_tokens": 3,
-                "prompt_tokens_details": {"cached_tokens": 5},
+                "input_tokens": 12,
+                "output_tokens": 3,
+                "input_tokens_details": {"cached_tokens": 5},
             },
         },
         {
             "model": "gpt-actual",
-            "choices": [{"finish_reason": "stop", "message": {"content": "done", "tool_calls": []}}],
-            "usage": {"prompt_tokens": 20, "completion_tokens": 4},
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "done"}]}],
+            "usage": {"input_tokens": 20, "output_tokens": 4},
         },
     ]
-    completions = FakeOpenAICompletions(responses)
-    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
-    backend = OpenAIBackend("gpt-requested", max_tokens=321, client=client)
+    fake = FakeOpenAIResponses(responses)
+    backend = OpenAIBackend("gpt-requested", max_tokens=321, client=openai_client(fake))
     tool = ToolSpec("lookup", "Look up", {"type": "object", "properties": {"q": {"type": "string"}}})
 
     backend.start("system", "prompt", [tool])
@@ -744,90 +741,95 @@ def _openai_backend_translates_tools_calls_and_tool_messages():
     backend.add_tool_results([ToolResult("call-1", "value")])
     second = backend.next_turn()
 
-    first_request = completions.requests[0]
-    assert first_request["max_completion_tokens"] == 321
-    assert first_request["messages"] == [
-        {"role": "system", "content": "system"},
-        {"role": "user", "content": "prompt"},
-    ]
+    first_request = fake.requests[0]
+    # Responses names the cap max_output_tokens and carries the system prompt as instructions.
+    assert first_request["max_output_tokens"] == 321
+    assert first_request["instructions"] == "system"
+    assert first_request["input"] == [{"role": "user", "content": "prompt"}]
+    # A function tool is declared flat here; Chat Completions nested it under "function".
     assert first_request["tools"] == [
         {
             "type": "function",
-            "function": {
-                "name": "lookup",
-                "description": "Look up",
-                "parameters": {"type": "object", "properties": {"q": {"type": "string"}}},
-            },
+            "name": "lookup",
+            "description": "Look up",
+            "parameters": {"type": "object", "properties": {"q": {"type": "string"}}},
         }
     ]
     assert first.tool_calls == [ToolCall("call-1", "lookup", {"q": "x"})]
     assert first.stop_reason is StopReason.TOOL_USE
-    assert first.provider_stop_reason == "tool_calls"
     assert first.usage == Usage(12, 3, 5, 0)
-    second_messages = completions.requests[1]["messages"]
-    assert second_messages[2] == {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
-            {
-                "id": "call-1",
-                "type": "function",
-                "function": {"name": "lookup", "arguments": '{"q":"x"}'},
-            }
-        ],
-    }
-    assert second_messages[3] == {"role": "tool", "tool_call_id": "call-1", "content": "value"}
+
+    second_input = fake.requests[1]["input"]
+    # The model's own items are replayed verbatim, reasoning included: dropping a reasoning
+    # item breaks the chain these models expect on the next request.
+    assert second_input[1]["type"] == "reasoning"
+    assert second_input[2]["type"] == "function_call"
+    assert second_input[2]["call_id"] == "call-1"
+    # The result is a function_call_output keyed by call_id, not a role-tagged tool message.
+    assert second_input[3] == {"type": "function_call_output", "call_id": "call-1", "output": "value"}
     assert second.text == "done"
     assert second.stop_reason is StopReason.END_TURN
-    assert second.provider_stop_reason == "stop"
     assert backend.actual_model == "gpt-actual"
 
 
 def _openai_backend_normalizes_refusal_for_driver_guard():
-    completions = FakeOpenAICompletions(
+    """A refusal must outrank the tool calls beside it, or the driver executes a refused write."""
+    fake = FakeOpenAIResponses(
         [
             {
                 "model": "gpt",
-                "choices": [
+                "status": "completed",
+                "output": [
+                    {"type": "message", "content": [{"type": "refusal", "refusal": "declined"}]},
                     {
-                        "finish_reason": "content_filter",
-                        "message": {
-                            "content": None,
-                            "refusal": "declined",
-                            "tool_calls": [
-                                {
-                                    "id": "danger",
-                                    "type": "function",
-                                    "function": {"name": "write", "arguments": "{}"},
-                                }
-                            ],
-                        },
-                    }
+                        "type": "function_call",
+                        "call_id": "danger",
+                        "name": "write",
+                        "arguments": "{}",
+                    },
                 ],
                 "usage": None,
             }
         ]
     )
-    backend = OpenAIBackend(
-        "gpt",
-        max_tokens=10,
-        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
-    )
+    backend = OpenAIBackend("gpt", max_tokens=10, client=openai_client(fake))
     backend.start(None, "prompt", [])
 
     turn = backend.next_turn()
 
     assert turn.stop_reason is StopReason.REFUSAL
-    assert turn.provider_stop_reason == "content_filter"
     assert turn.text == "declined"
     assert turn.tool_calls == [ToolCall("danger", "write", {})]
+
+
+def _openai_backend_preserves_malformed_arguments():
+    """Unparseable arguments are kept as _raw, never silently dropped to an empty call."""
+    fake = FakeOpenAIResponses(
+        [
+            {
+                "model": "gpt",
+                "status": "completed",
+                "output": [
+                    {"type": "function_call", "call_id": "c1", "name": "lookup", "arguments": "{not json"}
+                ],
+                "usage": None,
+            }
+        ]
+    )
+    backend = OpenAIBackend("gpt", max_tokens=10, client=openai_client(fake))
+    backend.start(None, "prompt", [])
+
+    turn = backend.next_turn()
+
+    assert turn.tool_calls == [ToolCall("c1", "lookup", {"_raw": "{not json"})]
 
 
 @pytest.mark.parametrize(
     "case",
     case_params(
-        _openai_backend_translates_tools_calls_and_tool_messages,
+        _openai_backend_translates_tools_calls_and_outputs,
         _openai_backend_normalizes_refusal_for_driver_guard,
+        _openai_backend_preserves_malformed_arguments,
     ),
 )
 def test_openai_backend_behaviours(case):
