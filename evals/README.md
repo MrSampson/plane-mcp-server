@@ -185,9 +185,10 @@ line (`N refusal(s) arrived flagged as successful results`) because it cannot jo
 on the protocol's error flag. It is worth watching: one measured surface refused roughly twice
 as often as its errored-call count implied.
 
-`--record-result-payloads` keeps the request args beside each recorded result. Args are
-metrics-only by default (`args_chars`), and a recorded result whose target is unknown cannot say
-*which* item a call acted on — which is exactly the question a failing write raises.
+Request args (`args_json`) are recorded on every driver, not just under
+`--record-result-payloads`. A recorded result whose target is unknown cannot say *which* item a
+call acted on — exactly the question a failing write raises — and the redundant-lookup metric
+cannot be computed without them. Result *payloads* remain opt-in; args are ids and short strings.
 
 Every result row carries a `battery` fingerprint derived from the selected catalog's task IDs,
 prompts, and catalog revision, plus a `task_fingerprint` over that row's task ID, prompt, and
