@@ -595,11 +595,15 @@ def agent_run_to_task_result(
         # tool choice — keep it (args content is otherwise not persisted).
         if isinstance(args, dict) and isinstance(args.get("action"), str):
             rec.action = args["action"]
-        # Under --record-result-payloads the proxy has already put the result body on the row,
-        # so the request that produced it is the other half of the same record. Keyed off
-        # result_text rather than a new flag: that is the signal payload recording is on, and
-        # a recorded response with no recorded request cannot be attributed to a target.
-        if isinstance(c.get("result_text"), str) and isinstance(args, dict) and args:
+        # Arguments are recorded for every driver. They were previously conditioned on
+        # result_text, which only the recording proxy sets -- so the api driver, which
+        # calls tools directly and never goes through the proxy, recorded arguments on
+        # none of its calls while a CLI arm recorded them on all of theirs. That is a
+        # coupling to an unrelated flag rather than a policy: the arguments are in hand
+        # on both paths, args_chars is already computed from them, and `action` above is
+        # already persisted unconditionally. What this adds to a result file is ids and
+        # short strings.
+        if isinstance(args, dict) and args:
             try:
                 rec.args_json = json.dumps(args, default=str, ensure_ascii=False)
             except Exception:

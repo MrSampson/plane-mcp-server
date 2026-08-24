@@ -13,6 +13,7 @@ from evals.skip_taxonomy import is_expected_environment_capability_skip, skip_re
 from .economics import EconomicsMeasurement, measure_economics
 from .failure_kinds import FailureKindMeasurement, measure_failure_kinds
 from .load import ResultRow, RunKeyValidation, is_infra_error_row, is_meta_row, read_result
+from .lookup_reuse import LookupReuseMeasurement, measure_lookup_reuse
 from .off_surface import OffSurfaceMeasurement, measure_off_surface
 from .schema_friction import SchemaFrictionMeasurement, measure_schema_friction
 from .statistics import cluster_bootstrap_mean_ci, iqr, median, percentile, wilson_interval
@@ -93,6 +94,7 @@ class Summary:
     schema_friction: SchemaFrictionMeasurement
     economics: EconomicsMeasurement
     failure_kinds: FailureKindMeasurement
+    lookup_reuse: LookupReuseMeasurement
 
     @property
     def complete(self) -> bool:
@@ -391,4 +393,5 @@ def summarize(
         schema_friction=measure_schema_friction(rows),
         economics=measure_economics(rows),
         failure_kinds=measure_failure_kinds(rows),
+        lookup_reuse=measure_lookup_reuse(rows),
     )

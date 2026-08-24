@@ -284,6 +284,7 @@ def print_ab_report(comparison: dict[str, Any], path_a: Path, path_b: Path) -> N
             print(f"  {label} {line}")
         for line in failure_kind_statement(summary.failure_kinds).splitlines():
             print(f"  {label} {line}")
+        print(f"  {label} {summary.lookup_reuse.statement()}")
     for label, summary in (("A", comparison["summary_a"]), ("B", comparison["summary_b"])):
         power = power_statement(summary)
         if power:

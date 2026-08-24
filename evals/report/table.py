@@ -106,6 +106,7 @@ def print_table(summary: Summary, title: str) -> None:
     if power:
         print(power)
     print(failure_kind_statement(summary.failure_kinds))
+    print(summary.lookup_reuse.statement())
     print(economics_statement(summary.economics))
     print(completeness_statement(summary))
     if summary.infra_errors:

@@ -224,14 +224,19 @@ def test_a_class_survives_every_hop_from_proxy_to_report(tmp_path):
     assert split_errors(reloaded.calls)["surface"] == 1, "the report did not see it"
 
 
-def test_request_args_are_recorded_only_alongside_a_recorded_result(tmp_path):
+def test_request_args_survive_the_hop_chain_on_every_driver(tmp_path):
     """A recorded refusal that cannot be attributed to a target answers half a question.
 
     W7 failed reproducibly with workitem_link.create reporting success while the link was
     absent, and the two candidate explanations -- wrong target, or a create that does not
-    persist -- were indistinguishable because only args_chars was kept. Args now ride along
-    with a recorded payload, and stay out when payloads are off: the same hop chain as
-    error_class, which is where a field of this kind gets silently dropped.
+    persist -- were indistinguishable because only args_chars was kept.
+
+    Args used to ride along with a recorded payload and stay out otherwise. That coupling
+    was to result_text, which only the recording proxy sets, so the api driver -- which
+    calls tools directly -- recorded args on none of its 484 calls while a CLI arm recorded
+    them on 330 of 331. Since the arguments are in hand on both paths and `action` is
+    already kept unconditionally, they are now recorded either way. This still guards the
+    hop chain, which is where a field of this kind gets silently dropped.
     """
     import json
 
@@ -269,9 +274,11 @@ def test_request_args_are_recorded_only_alongside_a_recorded_result(tmp_path):
     # The target is the point: without it the record cannot say which item was linked.
     assert "wi-42" in recorded.calls[0].args_json
 
-    # Default stays metrics-only. args_chars is still there; the body is not.
+    # A call with no recorded payload keeps its args too -- that is the whole point of
+    # decoupling them, since the api driver never produces a payload to ride along with.
     plain = roundtrip(with_payload=False)
-    assert plain.calls[0].args_json is None, "args leaked into a run that did not ask for payloads"
+    assert plain.calls[0].args_json is not None, "args must not depend on payload recording"
+    assert json.loads(plain.calls[0].args_json) == args
     assert plain.calls[0].args_chars > 0
     assert plain.calls[0].action == "create", "action is kept regardless — it is half the tool choice"
 

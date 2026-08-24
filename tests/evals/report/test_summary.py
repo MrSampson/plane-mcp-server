@@ -415,6 +415,7 @@ def test_single_rep_summary_renders_tool_distribution_unavailable(capsys):
         "are not verdicts at this depth; read the aggregate and paired deltas instead. "
         "Use --tasks with --reps 5+ for a per-task claim.\n"
         "failure kinds: no failed rows\n"
+        "redundant lookups: not measured \u2014 1 row(s) carry no recorded call arguments\n"
         "economics: cost=unmeasured (prices as of 2026-08-24); input tokens=unmeasured; result tokens=0\n"
         "  wall time=0s; call latency n/a\n"
         "  limitation: cost is computed from a static price table; a model absent from it reports "
