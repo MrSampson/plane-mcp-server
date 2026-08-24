@@ -9,6 +9,7 @@ from .economics import economics_statement
 from .failure_kinds import failure_kind_statement
 from .load import ResultRow, RunKeyValidation
 from .off_surface import off_surface_statement
+from .power import power_statement
 from .schema_friction import measure_schema_friction, schema_friction_statement, successful_trace_rows
 from .statistics import median, paired_bootstrap_mean_ci, paired_permutation_pvalue
 from .summary import completeness_statement, execution_coverage_statement, summarize
@@ -278,6 +279,10 @@ def print_ab_report(comparison: dict[str, Any], path_a: Path, path_b: Path) -> N
             print(f"  {label} {line}")
         for line in failure_kind_statement(summary.failure_kinds).splitlines():
             print(f"  {label} {line}")
+    for label, summary in (("A", comparison["summary_a"]), ("B", comparison["summary_b"])):
+        power = power_statement(summary)
+        if power:
+            print(f"  {label} {power}")
     print(f"  A {completeness_statement(comparison['summary_a'])}")
     print(f"  B {completeness_statement(comparison['summary_b'])}")
     print(f"  success rate delta (B−A): {rate_b - rate_a:+.1%}")

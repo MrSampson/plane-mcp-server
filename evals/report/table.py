@@ -13,6 +13,7 @@ from .economics import economics_statement
 from .failure_kinds import failure_kind_statement
 from .load import ResultRow, RunKeyValidation, is_infra_error_row, is_meta_row, read_result
 from .off_surface import off_surface_statement
+from .power import power_statement
 from .schema_friction import schema_friction_statement
 from .statistics import wilson_interval
 from .summary import (
@@ -101,6 +102,9 @@ def print_table(summary: Summary, title: str) -> None:
     print(execution_coverage_statement(summary))
     print(off_surface_statement(summary.off_surface))
     print(schema_friction_statement(summary.schema_friction))
+    power = power_statement(summary)
+    if power:
+        print(power)
     print(failure_kind_statement(summary.failure_kinds))
     print(economics_statement(summary.economics))
     print(completeness_statement(summary))
