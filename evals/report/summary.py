@@ -11,6 +11,7 @@ from evals.core.task_metadata import TaskMetadata, entry_needs, task_metadata_fr
 from evals.skip_taxonomy import is_expected_environment_capability_skip, skip_reason_family
 
 from .economics import EconomicsMeasurement, measure_economics
+from .failure_kinds import FailureKindMeasurement, measure_failure_kinds
 from .load import ResultRow, RunKeyValidation, is_infra_error_row, is_meta_row, read_result
 from .off_surface import OffSurfaceMeasurement, measure_off_surface
 from .schema_friction import SchemaFrictionMeasurement, measure_schema_friction
@@ -91,6 +92,7 @@ class Summary:
     off_surface: OffSurfaceMeasurement
     schema_friction: SchemaFrictionMeasurement
     economics: EconomicsMeasurement
+    failure_kinds: FailureKindMeasurement
 
     @property
     def complete(self) -> bool:
@@ -388,4 +390,5 @@ def summarize(
         off_surface=measure_off_surface(rows, task_catalog=task_metadata or None),
         schema_friction=measure_schema_friction(rows),
         economics=measure_economics(rows),
+        failure_kinds=measure_failure_kinds(rows),
     )

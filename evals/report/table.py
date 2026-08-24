@@ -9,6 +9,8 @@ from typing import Any
 from evals.core.results import TaskResult
 from evals.core.task_metadata import TaskMetadata, entry_prompt, task_metadata_from_rows
 
+from .economics import economics_statement
+from .failure_kinds import failure_kind_statement
 from .load import ResultRow, RunKeyValidation, is_infra_error_row, is_meta_row, read_result
 from .off_surface import off_surface_statement
 from .schema_friction import schema_friction_statement
@@ -99,6 +101,8 @@ def print_table(summary: Summary, title: str) -> None:
     print(execution_coverage_statement(summary))
     print(off_surface_statement(summary.off_surface))
     print(schema_friction_statement(summary.schema_friction))
+    print(failure_kind_statement(summary.failure_kinds))
+    print(economics_statement(summary.economics))
     print(completeness_statement(summary))
     if summary.infra_errors:
         print(f"infra errors: {summary.infra_errors}")

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .economics import economics_statement
+from .failure_kinds import failure_kind_statement
 from .load import ResultRow, RunKeyValidation
 from .off_surface import off_surface_statement
 from .schema_friction import measure_schema_friction, schema_friction_statement, successful_trace_rows
@@ -274,6 +275,8 @@ def print_ab_report(comparison: dict[str, Any], path_a: Path, path_b: Path) -> N
         for line in off_surface_statement(summary.off_surface).splitlines():
             print(f"  {label} {line}")
         for line in schema_friction_statement(summary.schema_friction).splitlines():
+            print(f"  {label} {line}")
+        for line in failure_kind_statement(summary.failure_kinds).splitlines():
             print(f"  {label} {line}")
     print(f"  A {completeness_statement(comparison['summary_a'])}")
     print(f"  B {completeness_statement(comparison['summary_b'])}")
