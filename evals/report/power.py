@@ -25,20 +25,25 @@ UNDERPOWERED_REPS = 5
 def power_statement(summary: Summary) -> str | None:
     """Return the guardrail line, or None when at least one task is well powered.
 
-    The claim is deliberately about the best-covered task: if any task reaches the
-    threshold, "no per-task verdict is supported" would be false, and a caveat that
-    overstates its own scope gets ignored along with the ones that do not.
+    Scoped to the tasks that are actually shallow. An earlier version keyed off the
+    best-covered task and fell silent as soon as any one task was deep, which left a
+    mixed run's shallow tasks uncaveated -- the opposite of the intended failure.
+
+    The threshold is a reporting heuristic, not a power calculation: 5/5 still carries a
+    Wilson interval of roughly [0.57, 1.00], so the line points readers at the aggregate
+    rather than promising that five repetitions settle anything.
     """
     counts = [task.n for task in summary.tasks.values() if task.n]
     if not counts:
         return None
-    best = max(counts)
-    if best >= UNDERPOWERED_REPS:
+    shallow = [count for count in counts if count < UNDERPOWERED_REPS]
+    if not shallow:
         return None
     return (
-        f"POWER: {best} repetition(s) per task at most — per-task pass rates and UNSTABLE flags "
-        f"are not verdicts at this depth; read the aggregate and paired deltas instead. "
-        f"Use --tasks with --reps {UNDERPOWERED_REPS}+ for a per-task claim."
+        f"POWER: {len(shallow)} of {len(counts)} task(s) below {UNDERPOWERED_REPS} repetitions "
+        f"(fewest {min(shallow)}) — their per-task pass rates and UNSTABLE flags are not verdicts "
+        f"at that depth; read the aggregate and paired deltas for those. Raising --reps narrows "
+        f"a per-task interval but no fixed count makes one conclusive."
     )
 
 

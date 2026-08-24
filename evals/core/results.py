@@ -109,9 +109,10 @@ class CallRecord:
     raw_tool: str | None = None
     # Which kind of "no" an errored call received; None when the call succeeded.
     error_class: str | None = None
-    # The request body, recorded only under --record-result-payloads. Args are metrics-only
-    # by default (see args_chars); without the request, a recorded refusal can be read but
-    # not attributed to the target it names, which is the question a payload is kept to answer.
+    # The request body, recorded on every driver. Without it a recorded refusal can be read
+    # but not attributed to the target it names, which is the question it is kept to answer.
+    # Long string values are truncated (see ARGS_VALUE_LIMIT): the tool surface accepts rich
+    # HTML, page bodies and attachment URLs, so an untruncated copy is unbounded in size.
     args_json: str | None = None
     result_tokens_skipped: str | None = None
     # None means the response was not checked; [] means checked with no match.
@@ -171,8 +172,8 @@ class TaskResult:
     4 adds the task-local question fingerprint used by future intersection comparisons.
     Version 5 adds typed trace integrity and the observed tool-manifest fingerprint.
     Version 6 adds the reproducible per-repetition fixture seed id, non-secret fixture kinds,
-    and randomization namespaces. Target entity ids and randomized truth values are
-    deliberately excluded.
+    and randomization namespaces. Randomized truth values are deliberately excluded; request
+    arguments, which name the target a call acted on, are recorded with long values truncated.
     """
 
     schema_version: int = RESULT_SCHEMA_VERSION
@@ -530,6 +531,37 @@ class TaskResult:
         )
 
 
+#: Longest string value kept inside a recorded argument dict. Identifiers, actions and
+#: enum values are far shorter than this, so what gets cut is prose: descriptions, HTML
+#: bodies, comment text and query strings. A 1MB description_html would otherwise be copied
+#: verbatim into the result file, which is neither useful for analysis nor safe to assume small.
+ARGS_VALUE_LIMIT = 256
+
+_TRUNCATION_MARK = "\u2026[truncated]"
+
+
+def _bounded_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Copy an argument dict with long string values cut to a fixed length.
+
+    Structure is preserved so the target of a call stays legible; only bulk content
+    is dropped. Nested containers are bounded through their serialized form, since a
+    list of ids is worth keeping whole and a list of page bodies is not.
+    """
+    bounded: dict[str, Any] = {}
+    for name, value in args.items():
+        if isinstance(value, str) and len(value) > ARGS_VALUE_LIMIT:
+            bounded[name] = value[:ARGS_VALUE_LIMIT] + _TRUNCATION_MARK
+        elif isinstance(value, (list, tuple, dict)):
+            try:
+                encoded = json.dumps(value, default=str, ensure_ascii=False)
+            except Exception:
+                encoded = str(value)
+            bounded[name] = value if len(encoded) <= ARGS_VALUE_LIMIT else encoded[:ARGS_VALUE_LIMIT] + _TRUNCATION_MARK
+        else:
+            bounded[name] = value
+    return bounded
+
+
 def agent_run_to_task_result(
     run: AgentRun,
 ) -> TaskResult:
@@ -605,9 +637,9 @@ def agent_run_to_task_result(
         # short strings.
         if isinstance(args, dict) and args:
             try:
-                rec.args_json = json.dumps(args, default=str, ensure_ascii=False)
+                rec.args_json = json.dumps(_bounded_args(args), default=str, ensure_ascii=False)
             except Exception:
-                rec.args_json = str(args)
+                rec.args_json = str(args)[:ARGS_VALUE_LIMIT]
         calls.append(rec)
 
     client_tool_calls: list[CallRecord] = []

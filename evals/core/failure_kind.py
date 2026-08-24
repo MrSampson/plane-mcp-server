@@ -31,6 +31,8 @@ which is a different measurement.
 
 from __future__ import annotations
 
+import re
+
 UNPROVEN = "unproven"
 WRONG_VALUE = "wrong_value"
 MISSING_WRITE = "missing_write"
@@ -72,10 +74,16 @@ _ABSENT = (
 _PRESENT = (
     " present",
     "names ",
+    " linked",
 )
 
 #: A stated expectation, which implies a value was compared rather than absent.
 _EXPECTATION = ("(want ", "want ")
+
+#: Absence phrasings that carry no "missing"/"not found" wording. Narrow on purpose --
+#: a bare "not " would swallow "not closed: end_date=X (want Y)", which is a value
+#: mismatch rather than an absence.
+_ABSENT_PATTERN = re.compile(r"\bno \d|\bno comments\b|\bnot archived\b|\bnot created\b")
 
 
 def classify_failure(
@@ -89,25 +97,30 @@ def classify_failure(
     Structural signals win over the note: a run that hit its ceiling has an
     unfinished state to report regardless of what the note says about it.
     """
-    if hit_max_iterations or (stop_reason or "").strip().lower() in _CAPPED_STOP_REASONS:
-        return ABANDONED
-
     text = (note or "").strip()
-    if not text:
-        return UNCLASSIFIED
     lowered = text.lower()
+    capped = hit_max_iterations or (stop_reason or "").strip().lower() in _CAPPED_STOP_REASONS
 
     if lowered.startswith("env:"):
         return ENVIRONMENT
 
-    # The verifier's own verdict outranks the prose after it: a note can say the
-    # answer was right and still be a failure, because the evidence was missing.
-    if _ANSWER_CORRECT in lowered:
-        return UNPROVEN
+    # A proven wrong answer outranks the cap. Running out of iterations explains why a
+    # run stopped, not why what it wrote was wrong, and calling that combination
+    # "abandoned" would file a demonstrated defect as a non-defect.
+    #
+    # The false marker is tested first because the true one is searched anywhere in the
+    # note, and a wrong value quoted back by the verifier can itself contain the string.
     if _ANSWER_WRONG in lowered:
         return WRONG_VALUE
+    if _ANSWER_CORRECT in lowered:
+        return UNPROVEN
 
-    absent = any(marker in lowered for marker in _ABSENT)
+    if capped:
+        return ABANDONED
+    if not text:
+        return UNCLASSIFIED
+
+    absent = bool(_ABSENT_PATTERN.search(lowered)) or any(marker in lowered for marker in _ABSENT)
     present = any(marker in lowered for marker in _PRESENT)
     if absent and present:
         return PARTIAL_WRITE

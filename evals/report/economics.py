@@ -26,6 +26,23 @@ from .load import ResultRow, is_infra_error_row, is_meta_row, read_result
 from .schema_friction import successful_trace_rows
 from .statistics import median, percentile
 
+
+def format_usd(amount: float) -> str:
+    """Render dollars without rounding a real figure down to nothing.
+
+    A genuine $0.00032 printed as $0.000 is the same "reads as free" mistake the three
+    cost outcomes exist to prevent, so small non-zero amounts keep enough digits to stay
+    visible. Used for every figure, the drift diagnostic included.
+    """
+    magnitude = abs(amount)
+    if magnitude < 1e-9:
+        # Float noise from summing many rows, not a real fraction of a cent.
+        return "$0.000"
+    if magnitude < 0.001:
+        return f"{'-' if amount < 0 else ''}${magnitude:.2e}"
+    return f"${amount:,.3f}" if amount >= 0 else f"-${magnitude:,.3f}"
+
+
 COST_LIMITATION = (
     "limitation: cost is computed from a static price table; a model absent from it reports "
     "unpriced, and a row whose driver recorded no usage at all reports unmeasured. Neither is $0"
@@ -62,6 +79,9 @@ class EconomicsMeasurement:
     unpriced_rows: int
     unmeasured_rows: int
     missing_input_rows: int
+    drift_computed_usd: float | None
+    drift_vendor_usd: float | None
+    drift_rows: int
     med_call_latency_ms: float | None
     p95_call_latency_ms: float | None
     prices_as_of: str = PRICES_AS_OF
@@ -70,20 +90,20 @@ class EconomicsMeasurement:
     def cost_drift_usd(self) -> float | None:
         """How far the price table sits from what the vendor said it charged.
 
-        None when no vendor reported a figure, which is most runs.
+        Computed over the rows carrying *both* figures, so a row the vendor priced but the
+        table could not (or the reverse) adds coverage noise to neither side. None when no
+        row carries both, which is most runs.
         """
-        if self.computed_cost_usd is None or self.vendor_cost_usd is None:
+        if self.drift_computed_usd is None or self.drift_vendor_usd is None:
             return None
-        return self.computed_cost_usd - self.vendor_cost_usd
+        return self.drift_computed_usd - self.drift_vendor_usd
 
     @property
     def cost_text(self) -> str:
         """Never render an unknown cost as a number, or a real one as zero."""
         if self.cost_usd is None:
             return UNMEASURED if self.cost_outcome == UNMEASURED else UNPRICED
-        # A run that really cost a fraction of a cent must not print $0.000; that is
-        # the same "reads as free" mistake in a different disguise.
-        text = "<$0.001" if 0 < self.cost_usd < 0.001 else f"${self.cost_usd:,.3f}"
+        text = format_usd(self.cost_usd)
         if self.unpriced_rows or self.unmeasured_rows:
             text += f" (+{self.unpriced_rows} unpriced, {self.unmeasured_rows} unmeasured rows)"
         return text
@@ -110,10 +130,14 @@ def _charged_rows(rows: list[ResultRow]) -> list[TaskResult]:
     charged: list[TaskResult] = []
     for raw_row in rows:
         row = read_result(raw_row)
-        if is_meta_row(row) or is_infra_error_row(row):
+        if is_meta_row(row):
             continue
-        if (row.error or row.skipped) and not has_token_counts(row.usage_total):
-            continue
+        if row.error or row.skipped or is_infra_error_row(row):
+            # An infrastructure classification is applied *after* the agent run is folded
+            # in, so a contained CLI timeout or trace failure can carry real usage. Keep
+            # any row that shows the model ran; drop only ones that never started.
+            if not has_token_counts(row.usage_total) and not row.calls:
+                continue
         charged.append(row)
     return charged
 
@@ -140,6 +164,9 @@ def measure_economics(rows: list[ResultRow]) -> EconomicsMeasurement:
     saw_computed = False
     vendor_total = 0.0
     saw_vendor = False
+    drift_computed = 0.0
+    drift_vendor = 0.0
+    drift_rows = 0
     priced = unpriced = unmeasured = 0
     for row in executed:
         tokens = _row_input_tokens(row)
@@ -168,6 +195,13 @@ def measure_economics(rows: list[ResultRow]) -> EconomicsMeasurement:
         if cost.vendor_usd is not None:
             vendor_total += cost.vendor_usd
             saw_vendor = True
+        # Drift is only meaningful over rows that carry *both* figures. Summing each side
+        # independently would fold coverage differences into what is meant to be a
+        # price-table comparison.
+        if cost.usd is not None and cost.vendor_usd is not None:
+            drift_computed += cost.usd
+            drift_vendor += cost.vendor_usd
+            drift_rows += 1
 
     if not saw_billed:
         # Nothing to report: say which kind of nothing it is.
@@ -205,6 +239,9 @@ def measure_economics(rows: list[ResultRow]) -> EconomicsMeasurement:
         computed_cost_usd=computed_total if saw_computed else None,
         vendor_cost_usd=vendor_total if saw_vendor else None,
         missing_input_rows=missing_input,
+        drift_computed_usd=drift_computed if drift_rows else None,
+        drift_vendor_usd=drift_vendor if drift_rows else None,
+        drift_rows=drift_rows,
         cost_outcome=outcome,
         priced_rows=priced,
         unpriced_rows=unpriced,
@@ -226,14 +263,15 @@ def economics_statement(measurement: EconomicsMeasurement) -> str:
         f"  wall time={measurement.total_wall_time_s:,.0f}s; call latency {latency_text}",
     ]
     drift = measurement.cost_drift_usd
-    if drift is not None and measurement.vendor_cost_usd is not None:
-        # The only standing check that the price table has not gone stale, so it has to
-        # compare the table's own figure against the vendor's -- not the reported cost,
-        # which already prefers the vendor and would always agree with itself.
+    if drift is not None:
+        # The only standing check that the price table has not gone stale, so it compares
+        # the table's own figure against the vendor's -- not the reported cost, which
+        # already prefers the vendor and would always agree with itself.
         lines.append(
-            f"  vendor-reported cost=${measurement.vendor_cost_usd:,.3f}; "
-            f"price table computes ${measurement.computed_cost_usd:,.3f} "
-            f"(differs by ${drift:+,.3f})"
+            f"  price-table check over {measurement.drift_rows} row(s) carrying both: "
+            f"vendor {format_usd(measurement.drift_vendor_usd)}, "
+            f"table {format_usd(measurement.drift_computed_usd)} "
+            f"(differs by {format_usd(drift)})"
         )
     lines.append(f"  {COST_LIMITATION}")
     return "\n".join(lines)
@@ -241,6 +279,7 @@ def economics_statement(measurement: EconomicsMeasurement) -> str:
 
 __all__ = [
     "COST_LIMITATION",
+    "format_usd",
     "EconomicsMeasurement",
     "TaskEconomics",
     "economics_statement",

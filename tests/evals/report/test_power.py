@@ -37,17 +37,23 @@ def test_the_guardrail_is_absent_at_five_reps():
     assert power_statement(summarize(rows_at(UNDERPOWERED_REPS))) is None
 
 
-def test_a_single_well_powered_task_suppresses_the_blanket_claim():
-    """The line says no task is well powered, so one that is makes it false."""
+def test_one_deep_task_does_not_silence_the_caveat_for_the_shallow_ones():
+    """Keying off the best-covered task left a mixed run's shallow tasks uncaveated.
+
+    That is the opposite of the intended failure, so the line is scoped to the tasks
+    that are actually shallow and names how many they are.
+    """
     rows = rows_at(2, tasks=2) + [
         {"task_id": "T9", "rep": rep, "success": True, "trace_integrity": True, "num_calls": 1, "calls": []}
         for rep in range(UNDERPOWERED_REPS)
     ]
-    assert power_statement(summarize(rows)) is None
+    statement = power_statement(summarize(rows))
+    assert statement is not None
+    assert "2 of 3" in statement
 
 
 def test_the_guardrail_names_the_rep_count_it_saw():
-    assert "2" in (power_statement(summarize(rows_at(2))) or "")
+    assert "fewest 2" in (power_statement(summarize(rows_at(2))) or "")
 
 
 def test_no_evaluated_rows_produces_no_claim():

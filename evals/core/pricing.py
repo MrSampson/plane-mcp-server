@@ -120,12 +120,14 @@ def lookup_price(model_id: str | None) -> ModelPrice | None:
 
 def price_usage(usage_total: Mapping[str, Any] | None, *, model: str | None = None) -> RowCost:
     """Price one row's ``usage_total``."""
-    if not usage_total or not has_token_counts(usage_total):
-        # A usage dict with no counts in it is metadata, not a measurement.
-        return RowCost(outcome=UNMEASURED, usd=None, model_id=model or None)
-
-    vendor = usage_total.get("total_cost_usd")
+    vendor = usage_total.get("total_cost_usd") if usage_total else None
     vendor_usd = float(vendor) if isinstance(vendor, (int, float)) else None
+
+    if not usage_total or not has_token_counts(usage_total):
+        # A usage dict with no counts in it is metadata, not a measurement -- but a vendor
+        # that stated what it charged still told us something, and discarding that would
+        # throw away the most authoritative figure available.
+        return RowCost(outcome=UNMEASURED, usd=None, model_id=model or None, vendor_usd=vendor_usd)
     model_id = resolve_model_id(usage_total, model=model)
 
     accounting = normalize_usage(usage_total, model=model_id)
