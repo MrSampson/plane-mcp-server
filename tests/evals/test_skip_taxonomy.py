@@ -62,3 +62,49 @@ def test_task_capability_pairs_are_derived_from_fixture_needs_and_fail_closed():
     assert classify_skip_reason("env:plan-gated:work-item-types", task_id="S1") == "expected-capability"
     assert classify_skip_reason("env:no-activity-worker", task_id="L2") == "expected-capability"
     assert classify_skip_reason("env:no-activity-worker", task_id="R1") == "unexpected"
+
+
+def test_describe_exception_flattens_a_task_group():
+    """The real failure must survive into the row, not the group's sub-exception count.
+
+    An OpenAI 400 naming the exact unsupported parameter was recorded as "unhandled errors in
+    a TaskGroup (1 sub-exception)", and recovering it meant reproducing the call by hand.
+
+    The helper reads only ``.exceptions``, so the contract is testable on every supported
+    Python; the genuine builtin is 3.11+, and this project still declares 3.10.
+    """
+    import builtins
+    import sys
+
+    from evals.core.errors import describe_exception
+
+    class FakeGroup(Exception):
+        """Anything exposing .exceptions -- which is all the helper looks at."""
+
+        def __init__(self, message, exceptions):
+            super().__init__(message)
+            self.exceptions = tuple(exceptions)
+
+    inner = ValueError("Function tools with reasoning_effort are not supported")
+    described = describe_exception(FakeGroup("unhandled errors in a TaskGroup", [inner]))
+    assert "reasoning_effort" in described, "the actual cause was dropped"
+    assert "ValueError" in described
+
+    # Nested groups flatten to their leaves.
+    nested = FakeGroup("outer", [FakeGroup("inner", [RuntimeError("deep")])])
+    assert "deep" in describe_exception(nested)
+
+    # A plain exception is unchanged in substance.
+    assert describe_exception(RuntimeError("plain")) == "RuntimeError: plain"
+
+    # A pathological fan-out is bounded rather than unbounded.
+    many = FakeGroup("many", [RuntimeError(f"e{i}") for i in range(20)])
+    assert describe_exception(many, limit=3).count("RuntimeError") == 3
+
+    # And against the real builtin wherever it exists -- looked up dynamically so this stays
+    # importable on 3.10 and does not read as an undefined name to the linter.
+    real_group = getattr(builtins, "BaseExceptionGroup", None)
+    if real_group is not None and sys.version_info >= (3, 11):
+        described = describe_exception(real_group("unhandled errors in a TaskGroup", [inner]))
+        assert "reasoning_effort" in described
+        assert "sub-exception" not in described.split(" -> ")[-1]

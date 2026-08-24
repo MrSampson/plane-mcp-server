@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from evals.core.errors import TaskSkipped
+from evals.core.errors import TaskSkipped, describe_exception
 from evals.core.evidence import configured_evidence_labels
 from evals.core.results import TaskResult, agent_run_to_task_result
 from evals.core.server_env import stdio_server_env
@@ -263,11 +263,14 @@ async def _drive_agent(
         else:
             agent_error_class = "infra_cli"
         row.success = False
-        row.error = f"{type(exc).__name__}: {exc}"
+        # Flattened, not str(exc): an ExceptionGroup's message names only its sub-exception
+        # count, and anyio wraps every driver call in a task group.
+        described = describe_exception(exc)
+        row.error = described
         row.error_class = agent_error_class
         row.verify_note = ""
         print(
-            f"  {task['id']} rep={repetition} ERROR[{agent_error_class}]: {exc}",
+            f"  {task['id']} rep={repetition} ERROR[{agent_error_class}]: {described}",
             file=sys.stderr,
         )
         return None
