@@ -108,11 +108,17 @@ actually get told no about: a run measuring 12.8% refusals was really near 28%. 
 deliberately narrow — only wording this server owns, and the stray-argument form must carry both
 halves of its sentence — so a result that merely quotes a refusal is not counted as one.
 
-Recorded payloads carry the **request** as well (`args_json`, under
-`--record-result-payloads`). Args are otherwise metrics-only: a recorded refusal that cannot be
-attributed to the target it names answers half a question. This is what separated an agent
-linking the wrong work item from a create that does not persist, when both fit the same
-symptom.
+Call **arguments** are recorded on every driver (`args_json`). A refusal that cannot be
+attributed to the target it names answers half a question, and this is what separated an agent
+linking the wrong work item from a create that does not persist, when both fit the same symptom.
+
+Arguments used to ride along with `--record-result-payloads` only. That coupled them to
+`result_text`, which just the recording proxy sets, so the api driver — which calls tools
+directly and never goes through the proxy — recorded arguments on none of its calls while a CLI
+arm recorded them on nearly all of theirs. The arguments were in hand on both paths regardless:
+`args_chars` is computed from them and `action` was already kept unconditionally. What a result
+file gains is ids and short strings; what it gains in return is the redundant-lookup metric
+below, which cannot be computed without them.
 
 Single-run success headlines use the same sampling unit: each evaluated task contributes
 its repetition success rate, and a deterministic cluster bootstrap resamples whole tasks.
@@ -164,6 +170,58 @@ mixed columns. An estimate is never presented as a measured tokenizer count.
 Payload recording is off by default because tool results contain live workspace data and
 make sidecars larger. The character-derived estimate remains useful for surface comparison
 because it is deterministic and monotonic in the recorded response size.
+
+### Cost, and what an unknown cost is allowed to look like
+
+`usage_total.input_tokens` does not mean the same thing across drivers. It is **inclusive** of
+cached reads under OpenAI Responses and **exclusive** under Anthropic Messages and every CLI
+vendor, and the same api driver produces both — so driver family cannot decide it. Backends now
+declare `input_tokens_include_cache` and the driver records `cache_semantics`;
+`evals.core.token_accounting` resolves declared → explicit total → no cache activity → model
+family, and **refuses** rather than guessing when none apply. Where a vendor states both parts
+and a total, the two must agree or the row is not priced: that disagreement means the shape
+changed underneath us, and an unpriced row is visible where a wrong price is not.
+
+Cost has three outcomes, and the distinction is the point. `priced`; `unpriced` when usage exists
+but the model is not in the table; `unmeasured` when the driver recorded no usage at all, which is
+true of every antigravity row. A silent `$0.00` reads as *free* rather than as *unknown*, so it is
+never printed — nor is a real sub-cent cost rounded into one.
+
+Prices go stale and a date alone detects nothing. Claude Code reports `total_cost_usd` per run, so
+the table's own figure is compared against the vendor's on every run that has one. That check must
+compare the table against the vendor rather than the reported cost against itself — the reported
+figure already prefers the vendor, so summing it on both sides makes the check incapable of firing.
+
+### Failure kinds
+
+A failed verifier answers several unrelated questions at once. Kinds are read from the verifier's
+own note text: `unproven`, `wrong_value`, `missing_write`, `partial_write`, `abandoned`,
+`environment`, `unclassified`. `unproven` — the answer was right and the run could not evidence it
+— is the largest family in the recorded corpus at over half of all failed rows, and is not an agent
+defect; nor are `environment` and `abandoned`. Reports name the non-defect total separately so a
+raw failure count is not mistaken for a defect count.
+
+Kinds come from note text only, so a write that landed on the *wrong entity* reports as missing or
+partial: the right entity is empty either way, and telling those apart needs call arguments.
+`unclassified` is counted and printed, so a zero in some kind never stands in for "the classifier
+did not recognise it".
+
+### Redundant lookups
+
+A `search` or `list` on a resource whose id already appeared in an earlier call of the same row.
+This is a **surface** property as much as an agent one — identifiers that stayed sticky across
+turns would close the gap without either agent changing. Scoped to one row, since each repetition
+is a fresh conversation, and the call that first resolves an id is never charged for the lookup
+that produced it. A run without recorded arguments reports *not measured* rather than zero: "no
+redundant lookups" and "we could not tell" are opposite conclusions.
+
+### Power
+
+A run's aggregate and its per-task rows have very different power and appear in the same table. At
+2 repetitions a task that passed once is `1/2 UNSTABLE` with a 95% interval of roughly [0.09, 0.91]
+— compatible with almost any true rate — while a paired aggregate across 35 tasks can resolve a
+difference at p=0.0018. Reports print a POWER line when no task reaches 5 repetitions, stating that
+per-task verdicts are not supported at that depth.
 
 ### Provenance: what counts as proof the answer came from the surface
 
