@@ -154,7 +154,8 @@ Self-hosting the server itself:
 | Variable | Purpose |
 |---|---|
 | `PLANE_INTERNAL_BASE_URL` | Internal URL for server-to-server calls, preferred over `PLANE_BASE_URL` |
-| `REDIS_HOST` / `REDIS_PORT` | OAuth token storage; falls back to in-memory |
+| `REDIS_HOST` / `REDIS_PORT` | OAuth token storage. Required for http/sse — without it the server refuses to start |
+| `PLANE_ALLOW_EPHEMERAL_TOKEN_STORE` | Accept an in-memory token store instead (local dev only — clients are logged out on every restart) |
 | `PLANE_OAUTH_PROVIDER_*` | OAuth client credentials and base URL |
 | `MCP_PATH_PREFIX` | Path prefix for the HTTP routes, when mounted behind a proxy — `/plane` serves `/plane/http/mcp` |
 

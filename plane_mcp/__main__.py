@@ -15,6 +15,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.routing import Mount
 
 from plane_mcp.server import get_header_mcp, get_oauth_mcp, get_stdio_mcp
+from plane_mcp.storage import build_token_store
 
 LOG_USER_INFO: bool = os.getenv("LOG_USER_INFO", "").lower() == "true"
 
@@ -145,11 +146,17 @@ def main() -> None:
     if server_mode == ServerMode.HTTP:
         prefix = os.getenv("MCP_PATH_PREFIX") or ""
 
-        oauth_mcp = get_oauth_mcp(prefix + "/http")
+        # One store for both OAuth mounts. They serve the same clients from the
+        # same process, so a client that registers on /http must resolve on /sse
+        # — two stores would only agree by way of a shared Redis, and would not
+        # agree at all on the in-memory one.
+        token_store = build_token_store()
+
+        oauth_mcp = get_oauth_mcp(prefix + "/http", client_storage=token_store)
         oauth_app = oauth_mcp.http_app(stateless_http=True)
         header_app = get_header_mcp().http_app(stateless_http=True)
 
-        sse_mcp = get_oauth_mcp(prefix)
+        sse_mcp = get_oauth_mcp(prefix, client_storage=token_store)
         sse_app = sse_mcp.http_app(transport="sse")
 
         # mcp_path is appended to the auth provider's base_url to form the

@@ -8,10 +8,17 @@ HTTP / SSE transports. Priority order (highest first):
    (``AWS_CONTAINER_CREDENTIALS_FULL_URI``) + host/port → Redis with a rotating
    AUTH token from AWS Secrets Manager.
 3. ``REDIS_HOST`` + ``REDIS_PORT`` → plain Redis (no auth).
-4. None of the above → in-memory store (dev only; tokens lost on restart).
+4. None of the above → refuses to start, unless
+   ``PLANE_ALLOW_EPHEMERAL_TOKEN_STORE`` opts in to an in-memory store.
 
 Misconfigurations raise ``RuntimeError`` at startup. Reachability is verified
 eagerly with a synchronous PING.
+
+The in-memory store is not a safe default: it is per-process, so a restart or a
+second replica loses the OAuth state behind tokens clients still hold, and the
+refresh grant then answers ``invalid_grant`` — which makes clients erase their
+credentials. That reads to the user as being logged out for no reason, so it is
+opt-in rather than a fallback.
 """
 
 from __future__ import annotations
@@ -24,6 +31,15 @@ from key_value.aio.stores.memory import MemoryStore
 from key_value.aio.stores.redis import RedisStore
 
 logger = get_logger(__name__)
+
+
+# Opt-in for the in-memory store. Named for what it costs, not what it enables.
+ALLOW_MEMORY_STORE_ENV = "PLANE_ALLOW_EPHEMERAL_TOKEN_STORE"
+
+
+def _memory_store_allowed() -> bool:
+    """True when the caller has explicitly accepted a store lost on restart."""
+    return os.getenv(ALLOW_MEMORY_STORE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _has_aws_credentials() -> bool:
@@ -98,7 +114,7 @@ def build_token_store() -> Any:
         # static-password deployments. Set REDIS_SSL=true for TLS-fronted Redis.
         use_ssl = _redis_ssl_enabled(default=False)
         _ping_redis(redis_host, int(redis_port), password=password, ssl=use_ssl)
-        store = RedisStore(host=redis_host, port=int(redis_port), password=password)
+        store = RedisStore(host=redis_host, port=int(redis_port), password=password, ssl=use_ssl)
         logger.info(
             "Token store: Redis (auth=password, host=%s, port=%s, ssl=%s)",
             redis_host,
@@ -161,6 +177,26 @@ def build_token_store() -> Any:
         logger.info("Token store: Redis (auth=none, host=%s, port=%s)", redis_host, redis_port)
         return store
 
-    # 4. In-memory fallback
-    logger.warning("Token store: in-memory (tokens lost on restart). Set REDIS_HOST and REDIS_PORT for production.")
+    # 4. In-memory — opt-in only.
+    #
+    # This store is per-process, so every restart drops the OAuth state behind
+    # tokens clients still hold: the JTI mapping vanishes and the refresh grant
+    # answers invalid_grant, which is one of the three codes that make a client
+    # erase its credentials. The user sees "logged out", with no way to tell it
+    # from a real revocation. A warning is too quiet for that, so http/sse
+    # refuse to start rather than serve auth that dies at the next deploy.
+    if not _memory_store_allowed():
+        raise RuntimeError(
+            "No token store configured. The HTTP/SSE transports keep OAuth state "
+            "(client registrations, token mappings) in this store, and an in-memory "
+            "one is lost on every restart — clients are silently logged out. "
+            "Set REDIS_HOST and REDIS_PORT, or set "
+            f"{ALLOW_MEMORY_STORE_ENV}=true to accept that for local development."
+        )
+
+    logger.warning(
+        "Token store: in-memory (%s=true). Tokens are lost on restart and are not "
+        "shared between processes — never use this in production.",
+        ALLOW_MEMORY_STORE_ENV,
+    )
     return MemoryStore()

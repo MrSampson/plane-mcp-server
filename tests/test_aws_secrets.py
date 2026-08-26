@@ -20,7 +20,7 @@ from key_value.aio.stores.redis import RedisStore
 
 from plane_mcp import aws_secrets, storage
 from plane_mcp.aws_secrets import ElastiCacheCredentialProvider, get_secret
-from plane_mcp.storage import build_token_store
+from plane_mcp.storage import ALLOW_MEMORY_STORE_ENV, build_token_store
 
 ARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:test"
 REGION = "us-east-1"
@@ -254,8 +254,46 @@ def test_credential_provider_missing_key_raises(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_build_token_store_no_env_returns_memory_store():
+def test_build_token_store_no_env_refuses_to_start(monkeypatch):
+    """An unconfigured store is a silent logout machine, so it must not be a default.
+
+    In-memory state dies with the process; the refresh grant then answers
+    invalid_grant and every connected client erases its credentials.
+    """
+    monkeypatch.delenv(ALLOW_MEMORY_STORE_ENV, raising=False)
+    with pytest.raises(RuntimeError, match="No token store configured"):
+        build_token_store()
+
+
+def test_build_token_store_memory_requires_explicit_opt_in(monkeypatch):
+    monkeypatch.setenv(ALLOW_MEMORY_STORE_ENV, "true")
     assert isinstance(build_token_store(), MemoryStore)
+
+
+@pytest.mark.parametrize("value", ["false", "0", "no", "", "  "])
+def test_build_token_store_memory_opt_in_rejects_non_truthy(monkeypatch, value):
+    monkeypatch.setenv(ALLOW_MEMORY_STORE_ENV, value)
+    with pytest.raises(RuntimeError, match="No token store configured"):
+        build_token_store()
+
+
+def test_build_token_store_password_branch_propagates_tls_to_the_store(monkeypatch, no_ping):
+    """REDIS_SSL reached the PING and the log line but not the store itself.
+
+    The startup PING then succeeded over TLS while every subsequent store
+    operation dialled plaintext — auth that fails only after boot looks fine.
+    """
+    monkeypatch.setenv("REDIS_HOST", "localhost")
+    monkeypatch.setenv("REDIS_PORT", "6379")
+    monkeypatch.setenv("REDIS_PASSWORD", "pw")
+    monkeypatch.setenv("REDIS_SSL", "true")
+    _forbid_boto3_secretsmanager(monkeypatch)
+
+    store = build_token_store()
+
+    assert store._client.connection_pool.connection_class.__name__ == "SSLConnection", (
+        "REDIS_SSL=true must reach RedisStore, not just the startup PING"
+    )
 
 
 def test_build_token_store_host_port_only_returns_redis(monkeypatch, no_ping):
