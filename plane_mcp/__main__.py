@@ -15,6 +15,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.routing import Mount
 
 from plane_mcp.server import get_header_mcp, get_oauth_mcp, get_stdio_mcp
+from plane_mcp.wellknown import openai_apps_challenge_routes
 
 LOG_USER_INFO: bool = os.getenv("LOG_USER_INFO", "").lower() == "true"
 
@@ -160,6 +161,8 @@ def main() -> None:
 
         app = Starlette(
             routes=[
+                # ChatGPT app-directory domain verification; origin root, unprefixed
+                *openai_apps_challenge_routes(),
                 # Well-known routes for OAuth and Header HTTP
                 *oauth_well_known,
                 *sse_well_known,

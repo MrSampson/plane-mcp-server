@@ -132,6 +132,7 @@ Integration tests in `tests/test_integration.py` use `FastMCP.Client` with `Stre
 | `REDIS_URL` | http/sse (optional) | Token storage as one connection URL (`redis://`/`rediss://`); wins over host/port |
 | `REDIS_HOST` / `REDIS_PORT` | http/sse (optional) | Token storage (falls back to in-memory) |
 | `PLANE_OAUTH_PROVIDER_*` | http/sse OAuth | OAuth client credentials and base URL |
+| `OPENAI_APPS_CHALLENGE_TOKEN` | http (optional) | ChatGPT app-directory domain verification; served verbatim at `/.well-known/openai-apps-challenge` on the origin root, ignoring `MCP_PATH_PREFIX` (`wellknown.py`) |
 | `PLANE_OAUTH_ALLOWED_REDIRECT_URIS` | http/sse OAuth (optional) | Comma-separated redirect URI patterns appended to the built-in allowlist (onboard clients without a release) |
 | `LOG_USER_INFO` | all (optional, default: false) | When `true`, include user info (PII such as display name) in logs alongside the opaque user id |
 | `LOG_PAYLOADS` | all (optional, default: true) | Log request payloads.|

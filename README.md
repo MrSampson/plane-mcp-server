@@ -158,6 +158,7 @@ Self-hosting the server itself:
 | `REDIS_HOST` / `REDIS_PORT` | OAuth token storage; falls back to in-memory |
 | `PLANE_OAUTH_PROVIDER_*` | OAuth client credentials and base URL |
 | `MCP_PATH_PREFIX` | Path prefix for the HTTP routes, when mounted behind a proxy — `/plane` serves `/plane/http/mcp` |
+| `OPENAI_APPS_CHALLENGE_TOKEN` | ChatGPT app-directory domain verification token; when set, served at `/.well-known/openai-apps-challenge` on the origin root (never prefixed) |
 
 ### OAuth redirect URIs
 
