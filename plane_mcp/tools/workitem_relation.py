@@ -90,7 +90,8 @@ ACTIONS = (
         "create",
         ("project_id", "workitem_id", "workitem_ids"),
         ("relation_type", "relation_definition_id", "relation_definition_label"),
-        note="pass relation_type for a dependency, or definition id + label for a custom relation",
+        note="pass relation_type for a dependency, or definition id + label for a custom relation; "
+        "workitem_ids may name work items in any project of the workspace, not only project_id's",
     ),
     Action(
         "delete",

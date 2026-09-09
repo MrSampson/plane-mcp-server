@@ -203,6 +203,16 @@ def test_create_dependency_target_is_not_restricted_to_the_source_project(regist
     assert call.kwargs["data"].work_item_ids == ["other-project-wi-9"]
 
 
+def test_create_advertises_cross_project_targets(resource_modules):
+    """The capability above is silent to a calling agent unless the tool's own
+    description says so -- an agent has no reason to assume workitem_ids can
+    cross projects unless told."""
+    workitem_relation = next(m for m in resource_modules if m.NAME == "workitem_relation")
+    create = next(a for a in workitem_relation.ACTIONS if a.name == "create")
+
+    assert "any project" in create.note
+
+
 # --- create: custom relation ---
 
 
