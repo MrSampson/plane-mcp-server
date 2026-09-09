@@ -153,6 +153,38 @@ def test_create_propagates_a_genuine_dependencies_error(registered, spy):
         )
 
 
+def test_create_reports_when_neither_dependency_nor_relations_route_exists(registered, spy):
+    """If the unified surface turns out not to exist on some CE version either,
+    a bare 404 propagated from the fallback would read exactly like issue #1's
+    original, unfixed symptom -- indistinguishable from "the fix didn't work"."""
+    spy.returns["work_items.dependencies.create"] = ROUTE_ABSENT
+    spy.returns["work_items.relations.create"] = ROUTE_ABSENT
+
+    result = registered["workitem_relation"].fn(
+        action="create",
+        project_id="proj-1",
+        workitem_id="wi-1",
+        workitem_ids=["wi-2"],
+        relation_type="blocking",
+    )
+
+    assert isinstance(result, str) and result.startswith("Error:")
+
+
+def test_create_propagates_a_genuine_error_from_the_relations_fallback(registered, spy):
+    spy.returns["work_items.dependencies.create"] = ROUTE_ABSENT
+    spy.returns["work_items.relations.create"] = ID_NOT_FOUND
+
+    with pytest.raises(HttpError):
+        registered["workitem_relation"].fn(
+            action="create",
+            project_id="proj-1",
+            workitem_id="wi-1",
+            workitem_ids=["wi-2"],
+            relation_type="blocking",
+        )
+
+
 def test_create_dependency_target_is_not_restricted_to_the_source_project(registered, spy):
     """This tool applies no client-side restriction on which project a target
     work item belongs to; `project_id` is always the source item's. Whether
@@ -284,10 +316,43 @@ def test_delete_custom_propagates_a_genuine_error(registered, spy):
         )
 
 
+def test_delete_reports_when_neither_removal_route_nor_relations_route_exists(registered, spy):
+    """Same reasoning as create's equivalent case: this is the one endpoint (the
+    unified /relations/remove) issue #1 flags as unverified against a live CE
+    instance, so a bare 404 here is the most likely fallback failure in practice."""
+    spy.returns["work_items.custom_relations.remove"] = ROUTE_ABSENT
+    spy.returns["work_items.relations.delete"] = ROUTE_ABSENT
+
+    result = registered["workitem_relation"].fn(
+        action="delete",
+        project_id="proj-1",
+        workitem_id="wi-1",
+        related_workitem_id="wi-2",
+    )
+
+    assert isinstance(result, str) and result.startswith("Error:")
+
+
+def test_delete_propagates_a_genuine_error_from_the_relations_fallback(registered, spy):
+    spy.returns["work_items.custom_relations.remove"] = ROUTE_ABSENT
+    spy.returns["work_items.relations.delete"] = ID_NOT_FOUND
+
+    with pytest.raises(HttpError):
+        registered["workitem_relation"].fn(
+            action="delete",
+            project_id="proj-1",
+            workitem_id="wi-1",
+            related_workitem_id="wi-2",
+        )
+
+
 # --- definitions ---
 
 
 def test_list_definitions_reports_when_the_route_is_absent(registered, spy):
+    """This call succeeds (it still answers `built_in_dependencies`), so its
+    `note` must not read like the whole call failed -- the same objection that
+    justified a read-shaped note for `list`'s custom branch applies here too."""
     spy.returns["work_item_relation_definitions.list"] = ROUTE_ABSENT
 
     result = registered["workitem_relation"].fn(action="list_definitions")
@@ -295,6 +360,7 @@ def test_list_definitions_reports_when_the_route_is_absent(registered, spy):
     assert result["custom_definitions"] == []
     assert result["built_in_dependencies"]
     assert "not available on this instance" in result["note"]
+    assert not result["note"].startswith("Error:")
 
 
 def test_list_definitions_propagates_a_genuine_error(registered, spy):

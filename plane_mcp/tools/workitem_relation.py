@@ -62,6 +62,28 @@ _CUSTOM_LIST_UNAVAILABLE_NOTE = (
     "because that capability is absent here -- not because no custom relations exist."
 )
 
+# Read-shaped counterpart to _DEFINITIONS_UNAVAILABLE: this call succeeds (it still
+# answers built_in_dependencies), so its note must not read like an "Error:" -- and
+# it has no relation_type parameter of its own to "pass instead" the way create does.
+_DEFINITIONS_ABSENT_NOTE = (
+    "Custom relation definitions are not available on this instance, so custom_definitions is "
+    "empty because that capability is absent here -- not because none are defined. Use a "
+    "built_in_dependencies value in relation_type."
+)
+
+# The instance serves neither the built-in nor the unified surface for this
+# operation -- distinct from _DEFINITIONS_UNAVAILABLE, which means only the
+# custom-relation half is missing while a fallback still exists.
+_CREATE_UNAVAILABLE_EVERYWHERE = (
+    "Error: this instance serves neither the built-in dependency endpoint nor the unified "
+    "relations endpoint; the relation could not be created."
+)
+
+_DELETE_UNAVAILABLE_EVERYWHERE = (
+    "Error: this instance serves neither the expected removal endpoint nor the unified "
+    "relations endpoint; the relation could not be removed."
+)
+
 ACTIONS = (
     Action("list", ("project_id", "workitem_id"), read=True),
     Action(
@@ -75,7 +97,8 @@ ACTIONS = (
         ("project_id", "workitem_id", "related_workitem_id"),
         ("is_dependency",),
         note="removes one relation; dependencies and custom relations are independent, so "
-        "is_dependency must match the kind that was created (default false)",
+        "is_dependency must match the kind that was created (default false) -- moot on an "
+        "instance with no custom-relation surface, where either value succeeds",
         destructive=True,
     ),
     Action("list_definitions", optional=("is_default", "is_active"), read=True),
@@ -115,14 +138,23 @@ def _route_absent(exc: HttpError) -> bool:
     return exc.status_code == 404 and isinstance(exc.response, dict) and exc.response.get("error") == "Page not found."
 
 
-def _or_unavailable(call: Callable[[], Any]) -> Any:
-    """Run `call`; a route-absent 404 answers the standard message instead of raising."""
+def _or_fallback(call: Callable[[], Any], on_route_absent: Callable[[], Any]) -> Any:
+    """Run `call`; a route-absent 404 runs `on_route_absent` instead of raising.
+
+    A genuine 404 from `call` always propagates, and so does one raised by
+    `on_route_absent` itself -- this only ever catches `call`'s own exception.
+    """
     try:
         return call()
     except HttpError as exc:
         if not _route_absent(exc):
             raise
-        return _DEFINITIONS_UNAVAILABLE
+        return on_route_absent()
+
+
+def _or_unavailable(call: Callable[[], Any]) -> Any:
+    """Run `call`; a route-absent 404 answers the standard message instead of raising."""
+    return _or_fallback(call, lambda: _DEFINITIONS_UNAVAILABLE)
 
 
 def _all_definitions(client, workspace_slug: str, is_default, is_active) -> list[WorkItemRelationDefinition]:
@@ -191,7 +223,7 @@ def register(mcp: FastMCP) -> None:
                 return {
                     "built_in_dependencies": list(DEPENDENCY_TYPES),
                     "custom_definitions": [],
-                    "note": _DEFINITIONS_UNAVAILABLE,
+                    "note": _DEFINITIONS_ABSENT_NOTE,
                 }
             return {
                 "built_in_dependencies": list(DEPENDENCY_TYPES),
@@ -241,28 +273,33 @@ def register(mcp: FastMCP) -> None:
 
         if action == "list":
             notes: list[str] = []
-            try:
-                dependencies = client.work_items.dependencies.list(
-                    workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
-                ).model_dump()
-            except HttpError as exc:
-                if not _route_absent(exc):
-                    raise
-                dependencies = client.work_items.relations.list(
-                    workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
-                ).model_dump()
+
+            def _dependencies_fallback() -> dict[str, Any]:
                 notes.append(_DEPENDENCY_FALLBACK_NOTE)
-            custom: dict[str, list[dict[str, Any]]]
-            try:
-                raw_custom = client.work_items.custom_relations.list(
+                return client.work_items.relations.list(
                     workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
-                )
-                custom = {label: [item.model_dump() for item in items] for label, items in raw_custom.items()}
-            except HttpError as exc:
-                if not _route_absent(exc):
-                    raise
-                custom = {}
+                ).model_dump()
+
+            dependencies = _or_fallback(
+                lambda: client.work_items.dependencies.list(
+                    workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
+                ).model_dump(),
+                _dependencies_fallback,
+            )
+
+            def _custom_fallback() -> dict[str, list[dict[str, Any]]]:
                 notes.append(_CUSTOM_LIST_UNAVAILABLE_NOTE)
+                return {}
+
+            custom = _or_fallback(
+                lambda: {
+                    label: [item.model_dump() for item in items]
+                    for label, items in client.work_items.custom_relations.list(
+                        workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
+                    ).items()
+                },
+                _custom_fallback,
+            )
             result: dict[str, Any] = {"dependencies": dependencies, "custom": custom}
             if notes:
                 result["note"] = " ".join(notes)
@@ -275,19 +312,8 @@ def register(mcp: FastMCP) -> None:
             if relation_type:
                 if error := one_of("relation_type", relation_type, DEPENDENCY_TYPES, _OTHER_RELATIONS):
                     return error
-                try:
-                    return client.work_items.dependencies.create(
-                        workspace_slug=workspace_slug,
-                        project_id=project_id,
-                        work_item_id=workitem_id,
-                        data=CreateWorkItemDependency(
-                            relation_type=relation_type,  # type: ignore[arg-type]
-                            work_item_ids=targets,
-                        ),
-                    )
-                except HttpError as exc:
-                    if not _route_absent(exc):
-                        raise
+
+                def _create_relations() -> None:
                     # relations.create forwards an unvalidated raw response body (the SDK
                     # types it None but its body is `return self._post(...)`) -- discard it
                     # so a successful create answers the same way regardless of which path
@@ -302,6 +328,22 @@ def register(mcp: FastMCP) -> None:
                         ),
                     )
                     return None
+
+                def _create_fallback() -> None | str:
+                    return _or_fallback(_create_relations, lambda: _CREATE_UNAVAILABLE_EVERYWHERE)
+
+                return _or_fallback(
+                    lambda: client.work_items.dependencies.create(
+                        workspace_slug=workspace_slug,
+                        project_id=project_id,
+                        work_item_id=workitem_id,
+                        data=CreateWorkItemDependency(
+                            relation_type=relation_type,  # type: ignore[arg-type]
+                            work_item_ids=targets,
+                        ),
+                    ),
+                    _create_fallback,
+                )
             if relation_definition_id and relation_definition_label:
                 return _or_unavailable(
                     lambda: client.work_items.custom_relations.create(
@@ -323,43 +365,28 @@ def register(mcp: FastMCP) -> None:
 
         if not related_workitem_id:
             return missing(action, "related_workitem_id")
-        if is_dependency:
-            try:
-                client.work_items.dependencies.remove(
-                    workspace_slug=workspace_slug,
-                    project_id=project_id,
-                    work_item_id=workitem_id,
-                    related_work_item_id=related_workitem_id,
-                )
-            except HttpError as exc:
-                if not _route_absent(exc):
-                    raise
-                client.work_items.relations.delete(
-                    workspace_slug=workspace_slug,
-                    project_id=project_id,
-                    work_item_id=workitem_id,
-                    data=RemoveWorkItemRelation(related_issue=related_workitem_id),
-                )
-            return None
 
-        try:
-            client.work_items.custom_relations.remove(
-                workspace_slug=workspace_slug,
-                project_id=project_id,
-                work_item_id=workitem_id,
-                related_work_item_id=related_workitem_id,
-            )
-        except HttpError as exc:
-            if not _route_absent(exc):
-                raise
-            # A route-absent 404 here does not mean "removal is unsupported" the
-            # way it does for a definition or an explicit custom relation_type:
-            # this instance has no custom-relation surface at all, so whatever
-            # exists to remove can only be a unified relation.
+        # Whichever kind is missing on this instance -- dependencies (is_dependency=True)
+        # or custom relations (the default) -- the unified relations surface is the only
+        # other place a deletable relation could be; that is true for either value of
+        # is_dependency on an instance that lacks that kind's own removal endpoint.
+        primary = client.work_items.dependencies.remove if is_dependency else client.work_items.custom_relations.remove
+
+        def _delete_relations() -> None:
             client.work_items.relations.delete(
                 workspace_slug=workspace_slug,
                 project_id=project_id,
                 work_item_id=workitem_id,
                 data=RemoveWorkItemRelation(related_issue=related_workitem_id),
             )
-        return None
+            return None
+
+        return _or_fallback(
+            lambda: primary(
+                workspace_slug=workspace_slug,
+                project_id=project_id,
+                work_item_id=workitem_id,
+                related_work_item_id=related_workitem_id,
+            ),
+            lambda: _or_fallback(_delete_relations, lambda: _DELETE_UNAVAILABLE_EVERYWHERE),
+        )
