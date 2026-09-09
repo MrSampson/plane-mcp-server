@@ -36,6 +36,7 @@ from plane_mcp.toolkit import (
     needs,
     one_of,
     opt,
+    route_absent,
 )
 
 NAME = "workitem_relation"
@@ -127,19 +128,6 @@ LEGACY = {
 }
 
 
-def _route_absent(exc: HttpError) -> bool:
-    """A 404 meaning "this path does not exist here", not "that id is not found".
-
-    Self-hosted Plane CE does not serve the `dependencies`, `custom_relations`
-    or `work_item_relation_definitions` surfaces at all, and a request to a
-    path that does not exist returns Plane's generic routing 404:
-    `{"error": "Page not found."}`. A real "no such id" 404 -- which can
-    happen on Cloud too, and must not be swallowed as "unsupported here" --
-    comes back as DRF's `{"detail": "Not found."}` instead.
-    """
-    return exc.status_code == 404 and isinstance(exc.response, dict) and exc.response.get("error") == "Page not found."
-
-
 def _or_fallback(call: Callable[[], Any], on_route_absent: Callable[[], Any]) -> Any:
     """Run `call`; a route-absent 404 runs `on_route_absent` instead of raising.
 
@@ -149,7 +137,7 @@ def _or_fallback(call: Callable[[], Any], on_route_absent: Callable[[], Any]) ->
     try:
         return call()
     except HttpError as exc:
-        if not _route_absent(exc):
+        if not route_absent(exc):
             raise
         return on_route_absent()
 
@@ -220,7 +208,7 @@ def register(mcp: FastMCP) -> None:
                     d.model_dump() for d in _all_definitions(client, workspace_slug, is_default, is_active)
                 ]
             except HttpError as exc:
-                if not _route_absent(exc):
+                if not route_absent(exc):
                     raise
                 return {
                     "built_in_dependencies": list(DEPENDENCY_TYPES),

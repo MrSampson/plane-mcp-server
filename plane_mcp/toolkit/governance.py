@@ -100,6 +100,19 @@ def migration_in_progress(exc: HttpError) -> bool:
     return _body(exc).get("code") == MIGRATION_IN_PROGRESS
 
 
+def route_absent(exc: HttpError) -> bool:
+    """A 404 meaning "this path does not exist on this instance", not "that id was not found".
+
+    Some Cloud-only surfaces are not served at all on self-hosted Plane CE, and a request to
+    a path that does not exist returns Plane's generic routing 404: `{"error": "Page not
+    found."}`. A real "no such id" 404 -- which can happen on Cloud too, and must not be
+    swallowed as "unsupported here" -- comes back as DRF's `{"detail": "Not found."}` instead.
+
+    Reads `exc.response` directly rather than through `_body`, which is 400-only.
+    """
+    return exc.status_code == 404 and isinstance(exc.response, dict) and exc.response.get("error") == "Page not found."
+
+
 def plan_required(exc: HttpError, feature: str) -> str | None:
     """A message naming the gated feature when the plan does not include it, else None."""
     if exc.status_code == 402 or (exc.status_code == 400 and PLAN_GATE_PROSE in str(exc).lower()):

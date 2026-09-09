@@ -21,6 +21,7 @@ from plane_mcp.toolkit.governance import (
     WORKSPACE_NOT_MANAGED,
     migration_in_progress,
     plan_required,
+    route_absent,
     scoped,
     workspace_owns,
     workspace_owns_resource,
@@ -65,6 +66,24 @@ def test_a_migration_in_progress_is_told_apart_from_ownership():
     assert migration_in_progress(exc)
     assert not workspace_owns(exc, "work_item_types")
     assert not migration_in_progress(_error(400, {"code": WORKSPACE_MANAGED}))
+
+
+def test_route_absent_recognises_planes_generic_routing_404():
+    """A path that does not exist on this instance at all -- CE lacking a Cloud-only surface."""
+    assert route_absent(_error(404, {"error": "Page not found."}))
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        _error(404, {"detail": "Not found."}),  # a genuine "no such id", must still propagate
+        _error(404, "not a dict"),  # a non-Plane 404 (proxy, gateway) carries no JSON body
+        _error(403, {"error": "Page not found."}),
+        _error(400, {"error": "Page not found."}),
+    ],
+)
+def test_anything_else_is_not_a_route_absent_404(exc):
+    assert not route_absent(exc)
 
 
 def test_a_plan_gate_names_the_feature():
