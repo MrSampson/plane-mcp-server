@@ -22,6 +22,27 @@ from pydantic import BaseModel, TypeAdapter
 
 types_UnionType = type(int | str)  # `X | Y` annotations are not typing.Union
 
+# On 3.14+, eagerly evaluating a `def list(...) -> list[str]` annotation resolves
+# `list` against the method being defined rather than the builtin, raising
+# `TypeError: 'function' object is not subscriptable` (a handful of SDK methods
+# are literally named `list`). FORWARDREF format sidesteps that evaluation path
+# and still resolves everything the default VALUE format would; older Pythons
+# predate both the `inspect.Format` enum and `get_type_hints`'s `format` keyword
+# entirely, so each is passed conditionally.
+_FORMAT = getattr(inspect, "Format", None)
+
+
+def sdk_signature(fn: Any) -> inspect.Signature:
+    """`inspect.signature` for a real SDK method -- see the 3.14 note above."""
+    kwargs = {"annotation_format": _FORMAT.FORWARDREF} if _FORMAT else {}
+    return inspect.signature(fn, **kwargs)
+
+
+def sdk_type_hints(fn: Any) -> dict[str, Any]:
+    """`typing.get_type_hints` for a real SDK method -- see the 3.14 note above."""
+    kwargs = {"format": _FORMAT.FORWARDREF} if _FORMAT else {}
+    return get_type_hints(fn, **kwargs)
+
 
 @dataclass
 class Call:
@@ -137,10 +158,10 @@ class _Method:
         self._spy = spy
         self._path = path
         self._fn = fn
-        self._signature = inspect.signature(fn)
+        self._signature = sdk_signature(fn)
         try:
-            self._hints = get_type_hints(fn)
-        except Exception:
+            self._hints = sdk_type_hints(fn)
+        except Exception:  # a few SDK annotations are not resolvable in isolation
             self._hints = {}
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
