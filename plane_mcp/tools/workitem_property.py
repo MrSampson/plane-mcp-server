@@ -47,6 +47,7 @@ from plane_mcp.toolkit import (
     opt,
     page_params,
     plan_gated,
+    route_absent,
     scoped,
     workspace_owns,
 )
@@ -241,16 +242,6 @@ def _options(options: str) -> list[CreateWorkItemPropertyOption] | None:
         raise ValueError(f"{OPTIONS_SHAPE}; one entry is unusable ({exc})") from exc
 
 
-def _absent(exc: HttpError) -> bool:
-    """Whether an error means "nothing here", as opposed to "the call failed".
-
-    Only 404 is a fallback signal. Swallowing everything turned an expired token
-    or a 500 into an empty list, which reads to a model as "no custom properties
-    exist" -- and it then drops the `cf[]` filter it was about to build.
-    """
-    return exc.status_code == 404
-
-
 def _link_to_type(client, workspace_slug: str, type_id: str, property_ids: list[str]) -> None:
     """Associate workspace properties with a workspace type."""
     client.workspace_work_item_types.properties.create(
@@ -299,7 +290,12 @@ def _manage_project_links(
 
 
 def _workspace_props_for_type(client, workspace_slug: str, type_id: str) -> list:
-    """Workspace properties linked to a type. The link endpoint returns bare ids."""
+    """Workspace properties linked to a type. The link endpoint returns bare ids.
+
+    A 404 here is only a fallback signal when it means "this route does not exist
+    on this instance" -- a genuine "no such type" 404 must propagate rather than
+    read to a model as "that type has no properties".
+    """
     try:
         property_ids = client.workspace_work_item_types.properties.list(workspace_slug=workspace_slug, type_id=type_id)
         if not property_ids:
@@ -308,7 +304,7 @@ def _workspace_props_for_type(client, workspace_slug: str, type_id: str) -> list
         everything = client.workspace_work_item_properties.list(workspace_slug=workspace_slug)
         return [p for p in everything if str(p.id) in wanted]
     except HttpError as exc:
-        if _absent(exc):
+        if route_absent(exc):
             return []
         raise
 
@@ -426,7 +422,7 @@ def register(mcp: FastMCP) -> None:
                 try:
                     return properties.list_project(workspace_slug=workspace_slug, project_id=project_id, params=params)
                 except HttpError as exc:
-                    if _absent(exc):
+                    if route_absent(exc):
                         return []
                     raise
             scoped = properties.list(
@@ -444,7 +440,7 @@ def register(mcp: FastMCP) -> None:
                 if flat:
                     return flat
             except HttpError as exc:
-                if not _absent(exc):
+                if not route_absent(exc):
                     raise
             return _workspace_props_for_type(client, workspace_slug, workitem_type_id)
 
