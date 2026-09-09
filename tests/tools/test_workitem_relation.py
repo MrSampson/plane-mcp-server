@@ -13,6 +13,8 @@ from __future__ import annotations
 import pytest
 from plane.errors.errors import HttpError
 
+from plane_mcp.tools.workitem_relation import DEPENDENCY_TYPES
+
 ROUTE_ABSENT = HttpError("Not Found", status_code=404, response={"error": "Page not found."})
 ID_NOT_FOUND = HttpError("Not Found", status_code=404, response={"detail": "Not found."})
 # A 404 from something upstream of Plane itself (a reverse proxy's own error page,
@@ -185,7 +187,7 @@ def test_create_propagates_a_genuine_error_from_the_relations_fallback(registere
         )
 
 
-@pytest.mark.parametrize("relation_type", ["blocking", "blocked_by"])
+@pytest.mark.parametrize("relation_type", DEPENDENCY_TYPES)
 def test_create_dependency_target_is_not_restricted_to_the_source_project(relation_type, registered, spy):
     """This tool applies no client-side restriction on which project a target
     work item belongs to, or on which relation_type is used to link them --

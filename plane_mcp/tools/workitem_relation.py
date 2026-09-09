@@ -91,7 +91,8 @@ ACTIONS = (
         ("project_id", "workitem_id", "workitem_ids"),
         ("relation_type", "relation_definition_id", "relation_definition_label"),
         note="pass relation_type for a dependency, or definition id + label for a custom relation; "
-        "workitem_ids may name work items in any project of the workspace, not only project_id's",
+        "workitem_ids may name work items in any project of the workspace, not just the one "
+        "project_id names",
     ),
     Action(
         "delete",
@@ -346,6 +347,11 @@ def register(mcp: FastMCP) -> None:
                     _create_fallback,
                 )
             if relation_definition_id and relation_definition_label:
+                # create's note advertises cross-project targets for workitem_ids
+                # unqualified, but that claim rests on the probe recorded in issue #1,
+                # which only exercised the dependency branch above. Nothing has
+                # confirmed the same acceptance here, on the custom-relation path --
+                # only that this call carries the id through unchanged.
                 return _or_unavailable(
                     lambda: client.work_items.custom_relations.create(
                         workspace_slug=workspace_slug,
