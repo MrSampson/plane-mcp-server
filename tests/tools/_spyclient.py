@@ -22,6 +22,16 @@ from pydantic import BaseModel, TypeAdapter
 
 types_UnionType = type(int | str)  # `X | Y` annotations are not typing.Union
 
+# On 3.14+, eagerly evaluating a `def list(...) -> list[str]` annotation resolves
+# `list` against the method being defined rather than the builtin, raising
+# `TypeError: 'function' object is not subscriptable` (a handful of SDK methods
+# are literally named `list`). FORWARDREF format sidesteps that evaluation path
+# and still resolves everything the VALUE format would; older Pythons predate
+# the `annotation_format` parameter entirely, so it is passed conditionally.
+_SIGNATURE_KWARGS: dict[str, Any] = (
+    {"annotation_format": inspect.Format.FORWARDREF} if hasattr(inspect, "Format") else {}
+)
+
 
 @dataclass
 class Call:
@@ -137,7 +147,7 @@ class _Method:
         self._spy = spy
         self._path = path
         self._fn = fn
-        self._signature = inspect.signature(fn)
+        self._signature = inspect.signature(fn, **_SIGNATURE_KWARGS)
         try:
             self._hints = get_type_hints(fn)
         except Exception:

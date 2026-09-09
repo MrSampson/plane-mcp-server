@@ -22,6 +22,8 @@ from plane.errors.errors import HttpError
 
 from plane_mcp.tools.workitem_type import _scope_of
 
+from ._spyclient import _SIGNATURE_KWARGS
+
 PROJECT = "project-1"
 TYPE_ID = "type-1"
 
@@ -85,7 +87,7 @@ def test_the_resolver_matches_the_sdk(project_id):
     for verb in ("list", "retrieve", "create", "update", "delete"):
         method = getattr(namespace, verb, None)
         assert method is not None, f"the SDK namespace has no {verb}()"
-        takes = inspect.signature(method).parameters
+        takes = inspect.signature(method, **_SIGNATURE_KWARGS).parameters
         if verb in ("retrieve", "update", "delete"):
             assert id_kwarg in takes, f"{verb}() does not take {id_kwarg!r}"
         for name in scope:
