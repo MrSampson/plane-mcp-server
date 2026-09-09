@@ -13,6 +13,8 @@ from __future__ import annotations
 import pytest
 from plane.errors.errors import HttpError
 
+from plane_mcp.tools.workitem_relation import DEPENDENCY_TYPES
+
 ROUTE_ABSENT = HttpError("Not Found", status_code=404, response={"error": "Page not found."})
 ID_NOT_FOUND = HttpError("Not Found", status_code=404, response={"detail": "Not found."})
 # A 404 from something upstream of Plane itself (a reverse proxy's own error page,
@@ -185,22 +187,36 @@ def test_create_propagates_a_genuine_error_from_the_relations_fallback(registere
         )
 
 
-def test_create_dependency_target_is_not_restricted_to_the_source_project(registered, spy):
+@pytest.mark.parametrize("relation_type", DEPENDENCY_TYPES)
+def test_create_dependency_target_is_not_restricted_to_the_source_project(relation_type, registered, spy):
     """This tool applies no client-side restriction on which project a target
-    work item belongs to; `project_id` is always the source item's. Whether
-    the live API accepts a cross-project target this way is established by
-    the probe recorded in issue #1, not by this test."""
+    work item belongs to, or on which relation_type is used to link them --
+    `project_id` is always the source item's, and the create call routes the
+    same way regardless of direction. Whether the live API accepts a
+    cross-project target this way is established by the probe recorded in
+    issue #1, not by this test."""
     registered["workitem_relation"].fn(
         action="create",
         project_id="proj-1",
         workitem_id="wi-1",
         workitem_ids=["other-project-wi-9"],
-        relation_type="blocking",
+        relation_type=relation_type,
     )
 
     call = spy.recorder.only()
     assert call.kwargs["project_id"] == "proj-1"
     assert call.kwargs["data"].work_item_ids == ["other-project-wi-9"]
+    assert call.kwargs["data"].relation_type == relation_type
+
+
+def test_create_advertises_cross_project_targets(resource_modules):
+    """The capability above is silent to a calling agent unless the tool's own
+    description says so -- an agent has no reason to assume workitem_ids can
+    cross projects unless told."""
+    workitem_relation = next(m for m in resource_modules if m.NAME == "workitem_relation")
+    create = next(a for a in workitem_relation.ACTIONS if a.name == "create")
+
+    assert "any project" in create.note
 
 
 # --- create: custom relation ---
