@@ -185,22 +185,26 @@ def test_create_propagates_a_genuine_error_from_the_relations_fallback(registere
         )
 
 
-def test_create_dependency_target_is_not_restricted_to_the_source_project(registered, spy):
+@pytest.mark.parametrize("relation_type", ["blocking", "blocked_by"])
+def test_create_dependency_target_is_not_restricted_to_the_source_project(relation_type, registered, spy):
     """This tool applies no client-side restriction on which project a target
-    work item belongs to; `project_id` is always the source item's. Whether
-    the live API accepts a cross-project target this way is established by
-    the probe recorded in issue #1, not by this test."""
+    work item belongs to, or on which relation_type is used to link them --
+    `project_id` is always the source item's, and the create call routes the
+    same way regardless of direction. Whether the live API accepts a
+    cross-project target this way is established by the probe recorded in
+    issue #1, not by this test."""
     registered["workitem_relation"].fn(
         action="create",
         project_id="proj-1",
         workitem_id="wi-1",
         workitem_ids=["other-project-wi-9"],
-        relation_type="blocking",
+        relation_type=relation_type,
     )
 
     call = spy.recorder.only()
     assert call.kwargs["project_id"] == "proj-1"
     assert call.kwargs["data"].work_item_ids == ["other-project-wi-9"]
+    assert call.kwargs["data"].relation_type == relation_type
 
 
 def test_create_advertises_cross_project_targets(resource_modules):
