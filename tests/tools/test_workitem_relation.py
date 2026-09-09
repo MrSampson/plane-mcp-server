@@ -15,6 +15,17 @@ from plane.errors.errors import HttpError
 
 ROUTE_ABSENT = HttpError("Not Found", status_code=404, response={"error": "Page not found."})
 ID_NOT_FOUND = HttpError("Not Found", status_code=404, response={"detail": "Not found."})
+# A 404 from something upstream of Plane itself (a reverse proxy's own error page,
+# say) carries no JSON body at all -- it must not be mistaken for Plane's own
+# routing signal.
+NON_JSON_404 = HttpError("Not Found", status_code=404, response="<html>404 Not Found</html>")
+
+
+def test_route_absent_requires_a_dict_body(registered, spy):
+    spy.returns["work_items.dependencies.list"] = NON_JSON_404
+
+    with pytest.raises(HttpError):
+        registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
 
 
 # --- list ---
@@ -38,7 +49,7 @@ def test_list_falls_back_to_relations_when_dependencies_route_is_absent(register
     fallback = spy.recorder.calls[spy.recorder.methods.index("work_items.relations.list")]
     assert fallback.kwargs["project_id"] == "proj-1"
     assert fallback.kwargs["work_item_id"] == "wi-1"
-    assert "note" in result
+    assert "plain work item ids" in result["note"]
 
 
 def test_list_does_not_note_anything_when_dependencies_route_exists(registered, spy):
@@ -55,11 +66,15 @@ def test_list_propagates_a_genuine_dependencies_error(registered, spy):
 
 
 def test_list_custom_returns_empty_when_its_route_is_absent(registered, spy):
+    """An empty `{}` here is indistinguishable from "this item genuinely has no
+    custom relations" unless a note says otherwise -- `list_definitions` already
+    notes the identical gap; `list` must too."""
     spy.returns["work_items.custom_relations.list"] = ROUTE_ABSENT
 
     result = registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
 
     assert result["custom"] == {}
+    assert "not available on this instance" in result["note"]
 
 
 def test_list_custom_propagates_a_genuine_error(registered, spy):
@@ -67,6 +82,21 @@ def test_list_custom_propagates_a_genuine_error(registered, spy):
 
     with pytest.raises(HttpError):
         registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
+
+
+def test_list_notes_both_gaps_when_the_whole_ce_scenario_fires_at_once(registered, spy):
+    """The realistic CE case: neither `dependencies` nor `custom_relations`
+    exist, only the unified `relations` endpoint does."""
+    spy.returns["work_items.dependencies.list"] = ROUTE_ABSENT
+    spy.returns["work_items.custom_relations.list"] = ROUTE_ABSENT
+
+    result = registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
+
+    assert "work_items.relations.list" in spy.recorder.methods
+    assert result["custom"] == {}
+    assert "plain work item ids" in result["note"]
+    assert "not available on this instance" in result["note"]
+    assert "note" in result
 
 
 # --- create: built-in dependency ---
@@ -124,8 +154,10 @@ def test_create_propagates_a_genuine_dependencies_error(registered, spy):
 
 
 def test_create_dependency_target_is_not_restricted_to_the_source_project(registered, spy):
-    """`project_id` in the URL names the source item only -- the SDK does not
-    reject a target from a different project of the same workspace."""
+    """This tool applies no client-side restriction on which project a target
+    work item belongs to; `project_id` is always the source item's. Whether
+    the live API accepts a cross-project target this way is established by
+    the probe recorded in issue #1, not by this test."""
     registered["workitem_relation"].fn(
         action="create",
         project_id="proj-1",
@@ -217,7 +249,14 @@ def test_delete_dependency_propagates_a_genuine_error(registered, spy):
         )
 
 
-def test_delete_custom_reports_when_its_route_is_absent(registered, spy):
+def test_delete_falls_back_to_relations_delete_by_default_when_custom_route_is_absent(registered, spy):
+    """`is_dependency` defaults to False, routing here to `custom_relations.remove`.
+    On CE that 404s route-absent -- but CE has no custom-relation surface at all,
+    so that 404 does not mean "removal is unsupported"; it means the only thing
+    that could exist to remove is a unified relation. Answering with the
+    definitions-unavailable message here (as create's custom branch does) would
+    be wrong: `delete` has no `relation_type` to "pass instead", and the default
+    call from a caller that never guessed `is_dependency=True` must still work."""
     spy.returns["work_items.custom_relations.remove"] = ROUTE_ABSENT
 
     result = registered["workitem_relation"].fn(
@@ -227,8 +266,10 @@ def test_delete_custom_reports_when_its_route_is_absent(registered, spy):
         related_workitem_id="wi-2",
     )
 
-    assert isinstance(result, str) and result.startswith("Error:")
-    assert "not available on this instance" in result
+    assert spy.recorder.methods[-1] == "work_items.relations.delete"
+    fallback = spy.recorder.calls[-1]
+    assert fallback.kwargs["data"].related_issue == "wi-2"
+    assert result is None
 
 
 def test_delete_custom_propagates_a_genuine_error(registered, spy):

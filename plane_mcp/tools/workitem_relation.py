@@ -57,6 +57,11 @@ _DEPENDENCY_FALLBACK_NOTE = (
     "not objects, and may include duplicate/relates_to alongside the built-in dependency types."
 )
 
+_CUSTOM_LIST_UNAVAILABLE_NOTE = (
+    "Custom relation definitions are not available on this instance, so 'custom' is empty "
+    "because that capability is absent here -- not because no custom relations exist."
+)
+
 ACTIONS = (
     Action("list", ("project_id", "workitem_id"), read=True),
     Action(
@@ -235,7 +240,7 @@ def register(mcp: FastMCP) -> None:
             return error
 
         if action == "list":
-            note = None
+            notes: list[str] = []
             try:
                 dependencies = client.work_items.dependencies.list(
                     workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
@@ -246,19 +251,21 @@ def register(mcp: FastMCP) -> None:
                 dependencies = client.work_items.relations.list(
                     workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
                 ).model_dump()
-                note = _DEPENDENCY_FALLBACK_NOTE
+                notes.append(_DEPENDENCY_FALLBACK_NOTE)
+            custom: dict[str, list[dict[str, Any]]]
             try:
-                custom = client.work_items.custom_relations.list(
+                raw_custom = client.work_items.custom_relations.list(
                     workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
                 )
-                custom = {label: [item.model_dump() for item in items] for label, items in custom.items()}
+                custom = {label: [item.model_dump() for item in items] for label, items in raw_custom.items()}
             except HttpError as exc:
                 if not _route_absent(exc):
                     raise
                 custom = {}
-            result = {"dependencies": dependencies, "custom": custom}
-            if note:
-                result["note"] = note
+                notes.append(_CUSTOM_LIST_UNAVAILABLE_NOTE)
+            result: dict[str, Any] = {"dependencies": dependencies, "custom": custom}
+            if notes:
+                result["note"] = " ".join(notes)
             return result
 
         if action == "create":
@@ -335,13 +342,24 @@ def register(mcp: FastMCP) -> None:
                 )
             return None
 
-        def _remove_custom() -> None:
+        try:
             client.work_items.custom_relations.remove(
                 workspace_slug=workspace_slug,
                 project_id=project_id,
                 work_item_id=workitem_id,
                 related_work_item_id=related_workitem_id,
             )
-            return None
-
-        return _or_unavailable(_remove_custom)
+        except HttpError as exc:
+            if not _route_absent(exc):
+                raise
+            # A route-absent 404 here does not mean "removal is unsupported" the
+            # way it does for a definition or an explicit custom relation_type:
+            # this instance has no custom-relation surface at all, so whatever
+            # exists to remove can only be a unified relation.
+            client.work_items.relations.delete(
+                workspace_slug=workspace_slug,
+                project_id=project_id,
+                work_item_id=workitem_id,
+                data=RemoveWorkItemRelation(related_issue=related_workitem_id),
+            )
+        return None
