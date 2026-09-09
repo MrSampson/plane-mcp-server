@@ -1,4 +1,4 @@
-"""Reading Plane's governance: who owns a resource, and what the plan allow."""
+"""Reading Plane's governance: who owns a resource, what the plan allows, and which edition serves it."""
 
 from __future__ import annotations
 
@@ -13,6 +13,9 @@ WORKSPACE_MANAGED = "workspace_managed"
 # Its inverse: a catalogue endpoint called in a workspace that still owns per project.
 WORKSPACE_NOT_MANAGED = "workspace_not_managed"
 MIGRATION_IN_PROGRESS = "governance_migration_in_progress"
+
+# Plane's generic routing 404, distinct from DRF's {"detail": "Not found."} for a real id-404.
+ROUTE_ABSENT_ERROR = "Page not found."
 
 # The governed resources, named as this server refers to them.
 WORK_ITEM_TYPES = "work_item_types"
@@ -110,7 +113,7 @@ def route_absent(exc: HttpError) -> bool:
 
     Reads `exc.response` directly rather than through `_body`, which is 400-only.
     """
-    return exc.status_code == 404 and isinstance(exc.response, dict) and exc.response.get("error") == "Page not found."
+    return exc.status_code == 404 and isinstance(exc.response, dict) and exc.response.get("error") == ROUTE_ABSENT_ERROR
 
 
 def plan_required(exc: HttpError, feature: str) -> str | None:
