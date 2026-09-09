@@ -7,6 +7,7 @@ and custom relations (workspace-defined, each with an outward and inward label).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal, get_args
 
 from fastmcp import FastMCP
@@ -49,6 +50,11 @@ _OTHER_RELATIONS = (
 
 _DEFINITIONS_UNAVAILABLE = (
     "Error: custom relation definitions are not available on this instance; pass a built-in relation_type instead."
+)
+
+_DEPENDENCY_FALLBACK_NOTE = (
+    "Served via this instance's unified relations endpoint: values are plain work item ids, "
+    "not objects, and may include duplicate/relates_to alongside the built-in dependency types."
 )
 
 ACTIONS = (
@@ -102,6 +108,16 @@ def _route_absent(exc: HttpError) -> bool:
     comes back as DRF's `{"detail": "Not found."}` instead.
     """
     return exc.status_code == 404 and isinstance(exc.response, dict) and exc.response.get("error") == "Page not found."
+
+
+def _or_unavailable(call: Callable[[], Any]) -> Any:
+    """Run `call`; a route-absent 404 answers the standard message instead of raising."""
+    try:
+        return call()
+    except HttpError as exc:
+        if not _route_absent(exc):
+            raise
+        return _DEFINITIONS_UNAVAILABLE
 
 
 def _all_definitions(client, workspace_slug: str, is_default, is_active) -> list[WorkItemRelationDefinition]:
@@ -180,8 +196,8 @@ def register(mcp: FastMCP) -> None:
         if action == "create_definition":
             if not name:
                 return missing(action, "name")
-            try:
-                return client.work_item_relation_definitions.create(
+            return _or_unavailable(
+                lambda: client.work_item_relation_definitions.create(
                     workspace_slug=workspace_slug,
                     data=CreateWorkItemRelationDefinition(
                         name=name,
@@ -191,15 +207,13 @@ def register(mcp: FastMCP) -> None:
                         color=opt(color),
                     ),
                 )
-            except HttpError as exc:
-                if not _route_absent(exc):
-                    raise
-                return _DEFINITIONS_UNAVAILABLE
+            )
 
         if action in ("update_definition", "delete_definition"):
             if not definition_id:
                 return missing(action, "definition_id")
-            try:
+
+            def _write_definition() -> Any:
                 if action == "update_definition":
                     return client.work_item_relation_definitions.update(
                         workspace_slug=workspace_slug,
@@ -214,15 +228,14 @@ def register(mcp: FastMCP) -> None:
                     )
                 client.work_item_relation_definitions.delete(workspace_slug=workspace_slug, definition_id=definition_id)
                 return None
-            except HttpError as exc:
-                if not _route_absent(exc):
-                    raise
-                return _DEFINITIONS_UNAVAILABLE
+
+            return _or_unavailable(_write_definition)
 
         if error := needs(action, project_id=project_id, workitem_id=workitem_id):
             return error
 
         if action == "list":
+            note = None
             try:
                 dependencies = client.work_items.dependencies.list(
                     workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
@@ -233,6 +246,7 @@ def register(mcp: FastMCP) -> None:
                 dependencies = client.work_items.relations.list(
                     workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
                 ).model_dump()
+                note = _DEPENDENCY_FALLBACK_NOTE
             try:
                 custom = client.work_items.custom_relations.list(
                     workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
@@ -242,7 +256,10 @@ def register(mcp: FastMCP) -> None:
                 if not _route_absent(exc):
                     raise
                 custom = {}
-            return {"dependencies": dependencies, "custom": custom}
+            result = {"dependencies": dependencies, "custom": custom}
+            if note:
+                result["note"] = note
+            return result
 
         if action == "create":
             targets = coerce_list(workitem_ids)
@@ -264,7 +281,11 @@ def register(mcp: FastMCP) -> None:
                 except HttpError as exc:
                     if not _route_absent(exc):
                         raise
-                    return client.work_items.relations.create(
+                    # relations.create forwards an unvalidated raw response body (the SDK
+                    # types it None but its body is `return self._post(...)`) -- discard it
+                    # so a successful create answers the same way regardless of which path
+                    # served it, rather than sometimes structured, sometimes not.
+                    client.work_items.relations.create(
                         workspace_slug=workspace_slug,
                         project_id=project_id,
                         work_item_id=workitem_id,
@@ -273,9 +294,10 @@ def register(mcp: FastMCP) -> None:
                             issues=targets,
                         ),
                     )
+                    return None
             if relation_definition_id and relation_definition_label:
-                try:
-                    return client.work_items.custom_relations.create(
+                return _or_unavailable(
+                    lambda: client.work_items.custom_relations.create(
                         workspace_slug=workspace_slug,
                         project_id=project_id,
                         work_item_id=workitem_id,
@@ -285,10 +307,7 @@ def register(mcp: FastMCP) -> None:
                             work_item_ids=targets,
                         ),
                     )
-                except HttpError as exc:
-                    if not _route_absent(exc):
-                        raise
-                    return _DEFINITIONS_UNAVAILABLE
+                )
             return (
                 "Error: provide relation_type for a built-in dependency, or both "
                 "relation_definition_id and relation_definition_label for a custom relation. "
@@ -315,15 +334,14 @@ def register(mcp: FastMCP) -> None:
                     data=RemoveWorkItemRelation(related_issue=related_workitem_id),
                 )
             return None
-        try:
+
+        def _remove_custom() -> None:
             client.work_items.custom_relations.remove(
                 workspace_slug=workspace_slug,
                 project_id=project_id,
                 work_item_id=workitem_id,
                 related_work_item_id=related_workitem_id,
             )
-        except HttpError as exc:
-            if not _route_absent(exc):
-                raise
-            return _DEFINITIONS_UNAVAILABLE
-        return None
+            return None
+
+        return _or_unavailable(_remove_custom)

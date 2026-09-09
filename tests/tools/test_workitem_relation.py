@@ -27,14 +27,24 @@ def test_list_uses_dependencies_when_the_route_exists(registered, spy):
 
 
 def test_list_falls_back_to_relations_when_dependencies_route_is_absent(registered, spy):
+    """The fallback's shape genuinely differs from the primary path -- bare id
+    strings under 8 keys (incl. duplicate/relates_to) instead of rich objects
+    under 6 -- so a caller needs telling, not just a silently different dict."""
     spy.returns["work_items.dependencies.list"] = ROUTE_ABSENT
 
-    registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
+    result = registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
 
     assert "work_items.relations.list" in spy.recorder.methods
     fallback = spy.recorder.calls[spy.recorder.methods.index("work_items.relations.list")]
     assert fallback.kwargs["project_id"] == "proj-1"
     assert fallback.kwargs["work_item_id"] == "wi-1"
+    assert "note" in result
+
+
+def test_list_does_not_note_anything_when_dependencies_route_exists(registered, spy):
+    result = registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
+
+    assert "note" not in result
 
 
 def test_list_propagates_a_genuine_dependencies_error(registered, spy):
@@ -50,6 +60,13 @@ def test_list_custom_returns_empty_when_its_route_is_absent(registered, spy):
     result = registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
 
     assert result["custom"] == {}
+
+
+def test_list_custom_propagates_a_genuine_error(registered, spy):
+    spy.returns["work_items.custom_relations.list"] = ID_NOT_FOUND
+
+    with pytest.raises(HttpError):
+        registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
 
 
 # --- create: built-in dependency ---
@@ -68,9 +85,16 @@ def test_create_uses_dependencies_when_the_route_exists(registered, spy):
 
 
 def test_create_falls_back_to_relations_when_dependencies_route_is_absent(registered, spy):
+    """`relations.create` forwards an unvalidated raw response body (the SDK
+    types it `None` but its body is `return self._post(...)`), unlike
+    `dependencies.create`'s parsed `list[WorkItemWithRelationType]`. Passing
+    that raw body straight through would make a successful create's return
+    shape silently path-dependent, so the fallback discards it and always
+    answers None -- one defined shape for a create that cannot report back
+    what it created, rather than sometimes-structured, sometimes-not."""
     spy.returns["work_items.dependencies.create"] = ROUTE_ABSENT
 
-    registered["workitem_relation"].fn(
+    result = registered["workitem_relation"].fn(
         action="create",
         project_id="proj-1",
         workitem_id="wi-1",
@@ -83,6 +107,7 @@ def test_create_falls_back_to_relations_when_dependencies_route_is_absent(regist
     data = fallback.kwargs["data"]
     assert data.relation_type == "blocking"
     assert data.issues == ["wi-2"]
+    assert result is None
 
 
 def test_create_propagates_a_genuine_dependencies_error(registered, spy):
@@ -204,6 +229,18 @@ def test_delete_custom_reports_when_its_route_is_absent(registered, spy):
 
     assert isinstance(result, str) and result.startswith("Error:")
     assert "not available on this instance" in result
+
+
+def test_delete_custom_propagates_a_genuine_error(registered, spy):
+    spy.returns["work_items.custom_relations.remove"] = ID_NOT_FOUND
+
+    with pytest.raises(HttpError):
+        registered["workitem_relation"].fn(
+            action="delete",
+            project_id="proj-1",
+            workitem_id="wi-1",
+            related_workitem_id="wi-2",
+        )
 
 
 # --- definitions ---
