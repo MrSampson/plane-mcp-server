@@ -13,9 +13,10 @@ from __future__ import annotations
 import pytest
 from plane.errors.errors import HttpError
 
+from plane_mcp.toolkit.governance import ROUTE_ABSENT_ERROR
 from plane_mcp.tools.workitem_relation import DEPENDENCY_TYPES
 
-ROUTE_ABSENT = HttpError("Not Found", status_code=404, response={"error": "Page not found."})
+ROUTE_ABSENT = HttpError("Not Found", status_code=404, response={"error": ROUTE_ABSENT_ERROR})
 ID_NOT_FOUND = HttpError("Not Found", status_code=404, response={"detail": "Not found."})
 # A 404 from something upstream of Plane itself (a reverse proxy's own error page,
 # say) carries no JSON body at all -- it must not be mistaken for Plane's own

@@ -104,7 +104,7 @@ Shared building blocks for the tool surface, split by *when* they act:
 | `spec.py` | declaration | `Action`, `build_description`, `build_annotations` |
 | `runtime.py` | call | `missing`, `needs`, `require`, `one_of`, `opt`, `coerce_list`, `page_params`, `as_params`, `ids_of` |
 | `paging.py` | response | `envelope`, `dump_results`, `pql_failure`, `workitem_page` |
-| `governance.py` | policy | `workspace_owns_resource`, `GOVERNED_BY`, `workspace_owns`, `migration_in_progress`, `plan_gated` |
+| `governance.py` | policy | `workspace_owns_resource`, `GOVERNED_BY`, `workspace_owns`, `migration_in_progress`, `plan_gated`, `route_absent` |
 | `transforms.py` | listing | `StripOutputSchemas` |
 
 Governance, plan gates and the rest of the toolkit conventions are documented in `plane_mcp/toolkit/README.md`, including what adding a newly governed resource takes.
