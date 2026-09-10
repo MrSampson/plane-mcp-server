@@ -11,18 +11,7 @@ from key_value.aio.stores.memory import MemoryStore
 from starlette.testclient import TestClient
 
 from plane_mcp.auth import PlaneHeaderAuthProvider, PlaneOAuthProvider
-
-ALLOWED_REDIRECT_URI_PATTERNS = [
-    "http://localhost:*",
-    "http://localhost:*/*",
-    "http://127.0.0.1:*",
-    "http://127.0.0.1:*/*",
-    "cursor://*",
-    "vscode://*",
-    "vscode-insiders://*",
-    "windsurf://*",
-    "claude://*",
-]
+from plane_mcp.server import DEFAULT_ALLOWED_REDIRECT_URIS
 
 
 @pytest.fixture()
@@ -38,7 +27,7 @@ def oauth_mcp():
             plane_internal_base_url="http://localhost:9999",
             client_storage=MemoryStore(),
             required_scopes=["read", "write"],
-            allowed_client_redirect_uris=ALLOWED_REDIRECT_URI_PATTERNS,
+            allowed_client_redirect_uris=DEFAULT_ALLOWED_REDIRECT_URIS,
             require_authorization_consent=False,
         ),
     )
