@@ -199,3 +199,13 @@ def test_list_raises_when_the_catalogue_lookup_is_absent_after_ids_are_in_hand(r
     with pytest.raises(HttpError) as excinfo:
         registered["workitem_property"].fn(action="list", workitem_type_id="type-1")
     assert excinfo.value is ROUTE_ABSENT
+
+
+@pytest.mark.parametrize("status", [401, 403, 500, 503])
+def test_list_propagates_a_catalogue_lookup_error_with_ids_already_in_hand(status, registered, spy):
+    """Call 2 is unwrapped entirely now -- it must not swallow any error, absent or not."""
+    spy.returns["workspace_work_item_types.properties.list"] = ["prop-1"]
+    spy.returns["workspace_work_item_properties.list"] = HttpError(f"boom {status}", status_code=status)
+
+    with pytest.raises(HttpError):
+        registered["workitem_property"].fn(action="list", workitem_type_id="type-1")
