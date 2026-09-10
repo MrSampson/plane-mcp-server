@@ -27,7 +27,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
-    "ruff>=0.1.0",
+    "pytest-cov>=4.0.0",
+    # Pinned exactly: ruff's formatter output and rule set both change across
+    # releases, and this is now a CI merge gate, not just a local convenience.
+    "ruff==0.15.22",
 ]
 
 [project.scripts]
@@ -60,3 +63,11 @@ quote-style = "double"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["plane_mcp"]
+
+[tool.coverage.report]
+# A few points of slack under the ~87% baseline, so this catches real
+# regressions without failing CI over normal day-to-day fluctuation.
+fail_under = 85
