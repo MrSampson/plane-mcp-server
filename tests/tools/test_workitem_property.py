@@ -10,6 +10,11 @@ from __future__ import annotations
 import pytest
 from plane.errors.errors import HttpError
 
+from plane_mcp.toolkit.governance import ROUTE_ABSENT_ERROR
+
+ROUTE_ABSENT = HttpError("Not Found", status_code=404, response={"error": ROUTE_ABSENT_ERROR})
+ID_NOT_FOUND = HttpError("Not Found", status_code=404, response={"detail": "Not found."})
+
 
 def _set_value(registered, spy, value):
     registered["workitem_property"].fn(
@@ -108,15 +113,78 @@ def test_list_propagates_auth_and_server_errors(status, registered, spy):
         registered["workitem_property"].fn(action="list")
 
 
-def test_list_still_falls_back_when_a_scope_is_genuinely_empty(registered, spy):
-    """404 stays a fallback signal -- that is what the widening chain is for.
+def test_list_still_falls_back_when_the_widening_route_is_absent(registered, spy):
+    """A route-absent 404 stays a fallback signal -- that is what the widening chain is for.
 
     The type-scoped list comes back empty (a property with no type association is
-    invisible to it), the project-flat widening 404s, and the workspace lookup
-    answers. That whole path must still end in `[]` rather than an exception.
+    invisible to it), the project-flat widening route 404s as absent, and the
+    workspace lookup answers. That whole path must still end in `[]` rather than
+    an exception.
     """
-    spy.returns["work_item_properties.list_project"] = HttpError("nope", status_code=404)
+    spy.returns["work_item_properties.list_project"] = ROUTE_ABSENT
 
     result = registered["workitem_property"].fn(action="list", project_id="proj-1", workitem_type_id="type-1")
+
+    assert result == []
+
+
+def test_widening_raises_on_a_genuine_id_404_instead_of_falling_through(registered, spy):
+    """A real "no such id" 404 during widening must not be read as "route absent".
+
+    Swallowing it here is worse than answering `[]`: control falls through to
+    `_workspace_props_for_type`, a workspace-scoped lookup that never mentions
+    `project_id` -- so a rejected project id could read back a plausible,
+    non-empty list of properties that have nothing to do with that project.
+    """
+    spy.returns["work_item_properties.list_project"] = ID_NOT_FOUND
+
+    with pytest.raises(HttpError) as excinfo:
+        registered["workitem_property"].fn(action="list", project_id="proj-1", workitem_type_id="type-1")
+    assert excinfo.value is ID_NOT_FOUND
+
+
+def test_list_raises_when_the_project_id_does_not_exist(registered, spy):
+    """A bad project_id on the flat (no-type) listing must not read as 'no properties'."""
+    spy.returns["work_item_properties.list_project"] = ID_NOT_FOUND
+
+    with pytest.raises(HttpError) as excinfo:
+        registered["workitem_property"].fn(action="list", project_id="proj-1")
+    assert excinfo.value is ID_NOT_FOUND
+
+
+def test_list_raises_on_a_bodiless_404_rather_than_treating_it_as_route_absent(registered, spy):
+    """A 404 from something upstream of Plane (a reverse proxy's own error page, say)
+    carries no JSON body at all -- it must not be mistaken for Plane's own routing
+    signal, which is exactly the deployment shape (self-hosted CE behind a proxy)
+    these fallbacks exist for."""
+    non_json_404 = HttpError("Not Found", status_code=404, response="<html>404 Not Found</html>")
+    spy.returns["work_item_properties.list_project"] = non_json_404
+
+    with pytest.raises(HttpError) as excinfo:
+        registered["workitem_property"].fn(action="list", project_id="proj-1")
+    assert excinfo.value is non_json_404
+
+
+def test_list_falls_back_to_empty_when_the_flat_route_is_absent(registered, spy):
+    spy.returns["work_item_properties.list_project"] = ROUTE_ABSENT
+
+    result = registered["workitem_property"].fn(action="list", project_id="proj-1")
+
+    assert result == []
+
+
+def test_list_raises_when_the_type_id_does_not_exist(registered, spy):
+    """A bad workitem_type_id on the workspace-scope listing must not read as 'no properties'."""
+    spy.returns["workspace_work_item_types.properties.list"] = ID_NOT_FOUND
+
+    with pytest.raises(HttpError) as excinfo:
+        registered["workitem_property"].fn(action="list", workitem_type_id="type-1")
+    assert excinfo.value is ID_NOT_FOUND
+
+
+def test_list_falls_back_to_empty_when_the_type_link_route_is_absent(registered, spy):
+    spy.returns["workspace_work_item_types.properties.list"] = ROUTE_ABSENT
+
+    result = registered["workitem_property"].fn(action="list", workitem_type_id="type-1")
 
     assert result == []
