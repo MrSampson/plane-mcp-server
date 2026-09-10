@@ -86,7 +86,7 @@ If a feature is missing, you can directly _request_ a new one [here](https://git
 To ensure consistency throughout the source code, please keep these rules in mind as you are working:
 
 - All features or bug fixes must be tested by one or more specs (unit-tests).
-- We format with [Black](https://black.readthedocs.io/) (line length: 100) and lint with [Ruff](https://docs.astral.sh/ruff/) (rules: E, F, I, UP, B; line length: 100).
+- We format and lint with [Ruff](https://docs.astral.sh/ruff/) (rules: E, F, I, UP, B; line length: 120).
 - Use Python 3.10+ union syntax (`str | None` instead of `Optional[str]`).
 - Tool functions must follow the existing pattern: use `@mcp.tool()` decorator, accept typed parameters, and return Pydantic models from `plane-sdk`.
 - Include docstrings with `Args` and `Returns` sections for all new tools.
@@ -102,14 +102,18 @@ To ensure consistency throughout the source code, please keep these rules in min
 
 ```bash
 # Format
-black plane_mcp/
+ruff format plane_mcp/ tests/
 
 # Lint
-ruff check plane_mcp/
+ruff check plane_mcp/ tests/
 
 # Test
 pytest
 ```
+
+CI (`.github/workflows/test.yml`) runs these same checks on every push and pull
+request against `main`: `pytest` on Python 3.10 through 3.14 with a coverage
+floor, plus `ruff check` and `ruff format --check`.
 
 ## Ways to contribute
 

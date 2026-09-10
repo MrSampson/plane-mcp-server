@@ -1,5 +1,7 @@
 # Plane MCP Server
 
+[![Tests](https://github.com/MrSampson/plane-mcp-server/actions/workflows/test.yml/badge.svg)](https://github.com/MrSampson/plane-mcp-server/actions/workflows/test.yml)
+
 A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [Plane](https://plane.so). Gives an AI agent tools to read and manage projects,
 work items, cycles, modules, releases, customers and more.
@@ -240,6 +242,9 @@ They write real data to that workspace.
 Pull requests welcome. Please run `pytest` and `ruff check` before submitting; new
 tools should come with the invariants described in
 [`plane_mcp/tools/README.md`](plane_mcp/tools/README.md).
+
+CI runs the suite on Python 3.10 through 3.14, lints with `ruff`, and enforces a
+coverage floor — see [`.github/workflows/test.yml`](.github/workflows/test.yml).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
