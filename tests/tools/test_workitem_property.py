@@ -188,3 +188,14 @@ def test_list_falls_back_to_empty_when_the_type_link_route_is_absent(registered,
     result = registered["workitem_property"].fn(action="list", workitem_type_id="type-1")
 
     assert result == []
+
+
+def test_list_raises_when_the_catalogue_lookup_is_absent_after_ids_are_in_hand(registered, spy):
+    """The link endpoint proves properties exist for this type; a route-absent 404
+    resolving them against the catalogue must not then answer 'no properties'."""
+    spy.returns["workspace_work_item_types.properties.list"] = ["prop-1"]
+    spy.returns["workspace_work_item_properties.list"] = ROUTE_ABSENT
+
+    with pytest.raises(HttpError) as excinfo:
+        registered["workitem_property"].fn(action="list", workitem_type_id="type-1")
+    assert excinfo.value is ROUTE_ABSENT
