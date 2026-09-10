@@ -292,12 +292,13 @@ def _manage_project_links(
 def _workspace_props_for_type(client, workspace_slug: str, type_id: str) -> list:
     """Workspace properties linked to a type. The link endpoint returns bare ids.
 
-    A 404 here is only a fallback signal when it means "this route does not exist
-    on this instance" -- a genuine "no such type" 404 must propagate rather than
-    read to a model as "that type has no properties". Only the link lookup gets
-    that treatment: once it has returned real ids, a route-absent 404 resolving
-    them against the catalogue proves nothing empty -- it must propagate too,
-    rather than discard ids already known to exist.
+    A 404 from the link lookup is only a fallback signal when it means "this
+    route does not exist on this instance" -- a genuine "no such type" 404 must
+    propagate rather than read to a model as "that type has no properties".
+    Only the link lookup gets that treatment. Once it has returned real ids, a
+    route-absent 404 resolving them against the catalogue tells you nothing
+    about emptiness -- it must propagate too, rather than discard ids already
+    known to exist.
     """
     try:
         property_ids = client.workspace_work_item_types.properties.list(workspace_slug=workspace_slug, type_id=type_id)
