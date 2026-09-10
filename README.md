@@ -239,8 +239,8 @@ They write real data to that workspace.
 
 ## Contributing
 
-Pull requests welcome. Please run `pytest` and `ruff check` before submitting; new
-tools should come with the invariants described in
+Pull requests welcome. Please run `pytest`, `ruff check`, and `ruff format --check`
+before submitting; new tools should come with the invariants described in
 [`plane_mcp/tools/README.md`](plane_mcp/tools/README.md).
 
 CI runs the suite on Python 3.10 through 3.14, lints with `ruff`, and enforces a
