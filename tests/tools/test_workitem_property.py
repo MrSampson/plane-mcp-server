@@ -7,6 +7,8 @@ error is a self-correction channel, a plausible wrong answer is not.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from plane.errors.errors import HttpError
 
@@ -188,3 +190,40 @@ def test_list_falls_back_to_empty_when_the_type_link_route_is_absent(registered,
     result = registered["workitem_property"].fn(action="list", workitem_type_id="type-1")
 
     assert result == []
+
+
+def test_list_raises_when_the_catalogue_lookup_is_absent_after_ids_are_in_hand(registered, spy):
+    """The link endpoint proves properties exist for this type; a route-absent 404
+    resolving them against the catalogue must not then answer 'no properties'."""
+    spy.returns["workspace_work_item_types.properties.list"] = ["prop-1"]
+    spy.returns["workspace_work_item_properties.list"] = ROUTE_ABSENT
+
+    with pytest.raises(HttpError) as excinfo:
+        registered["workitem_property"].fn(action="list", workitem_type_id="type-1")
+    assert excinfo.value is ROUTE_ABSENT
+
+
+@pytest.mark.parametrize("status", [401, 403, 500, 503])
+def test_list_propagates_a_catalogue_lookup_error_with_ids_already_in_hand(status, registered, spy):
+    """Call 2 is unwrapped entirely now -- it must not swallow any error, absent or not."""
+    spy.returns["workspace_work_item_types.properties.list"] = ["prop-1"]
+    spy.returns["workspace_work_item_properties.list"] = HttpError(f"boom {status}", status_code=status)
+
+    with pytest.raises(HttpError):
+        registered["workitem_property"].fn(action="list", workitem_type_id="type-1")
+
+
+def test_list_resolves_linked_ids_against_the_catalogue(registered, spy):
+    """The link endpoint's ids select their properties out of the workspace catalogue.
+
+    Every other test here makes the catalogue lookup fail -- none confirms that,
+    on success, the ids it proved linked actually come back as properties.
+    """
+    linked = SimpleNamespace(id="prop-1")
+    other = SimpleNamespace(id="prop-2")
+    spy.returns["workspace_work_item_types.properties.list"] = ["prop-1"]
+    spy.returns["workspace_work_item_properties.list"] = [linked, other]
+
+    result = registered["workitem_property"].fn(action="list", workitem_type_id="type-1")
+
+    assert result == [linked]
