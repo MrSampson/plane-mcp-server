@@ -45,14 +45,17 @@ For a self-hosted Plane, add `"PLANE_BASE_URL": "https://plane.example.com"`.
 upstream (`makeplane`), regardless of what's on this fork's `main` — the
 package name is the same, so plain `uvx`/`pip` can't tell them apart. To
 pick up fixes that are on this fork ahead of the next upstream release,
-install straight from a tagged commit here instead:
+install straight from a tagged commit here instead. Fork tags use the
+upstream version they branched from plus a `-br` suffix (e.g. `0.3.2-br`)
+— this isn't a new upstream release, just a pinnable marker for this
+fork's state, and versioning decisions stay with upstream:
 
 ```bash
-uvx --from git+https://github.com/MrSampson/plane-mcp-server.git@0.3.3 plane-mcp-server stdio
+uvx --from git+https://github.com/MrSampson/plane-mcp-server.git@0.3.2-br plane-mcp-server stdio
 ```
 
 ```bash
-pip install git+https://github.com/MrSampson/plane-mcp-server.git@0.3.3
+pip install git+https://github.com/MrSampson/plane-mcp-server.git@0.3.2-br
 ```
 
 Pin to a tag (not `@main`) — `main` is a moving target, and this project's
