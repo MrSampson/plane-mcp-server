@@ -38,6 +38,32 @@ Add this to your MCP client's configuration:
 
 For a self-hosted Plane, add `"PLANE_BASE_URL": "https://plane.example.com"`.
 
+## Installing this fork instead of the PyPI package
+
+`uvx plane-mcp-server` always resolves the
+[PyPI package](https://pypi.org/project/plane-mcp-server/) published by
+upstream (`makeplane`), regardless of what's on this fork's `main` — the
+package name is the same, so plain `uvx`/`pip` can't tell them apart. To
+pick up fixes that are on this fork ahead of the next upstream release,
+install straight from a tagged commit here instead. Fork tags use the
+upstream version they branched from plus a `-br` suffix (e.g. `0.3.2-br`)
+— this isn't a new upstream release, just a pinnable marker for this
+fork's state, and versioning decisions stay with upstream:
+
+```bash
+uvx --from git+https://github.com/MrSampson/plane-mcp-server.git@0.3.2-br plane-mcp-server stdio
+```
+
+```bash
+pip install git+https://github.com/MrSampson/plane-mcp-server.git@0.3.2-br
+```
+
+Pin to a tag (not `@main`) — `main` is a moving target, and this project's
+own guidance above is not to run an unpinned server since the tool surface
+can change shape between releases. Re-pin to a newer tag when you
+deliberately want to pick up more fork commits. No credentials are needed;
+this repo is public.
+
 ## Transports
 
 ### stdio — local
