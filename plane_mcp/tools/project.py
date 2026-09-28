@@ -18,7 +18,17 @@ from plane.models.projects import (
 from plane.models.query_params import ProjectLiteListQueryParams
 
 from plane_mcp.client import get_plane_client_context
-from plane_mcp.toolkit import Action, build_annotations, build_description, missing, needs, opt, plan_gated, rich_text
+from plane_mcp.toolkit import (
+    Action,
+    build_annotations,
+    build_description,
+    missing,
+    needs,
+    opt,
+    or_fallback,
+    plan_gated,
+    rich_text,
+)
 
 NAME = "project"
 TITLE = "Projects"
@@ -77,7 +87,15 @@ ACTIONS = (
     Action("archive", ("project_id",)),
     Action("unarchive", ("project_id",)),
     Action("worklog_summary", ("project_id",), read=True),
-    Action("get_features", ("project_id",), read=True),
+    Action(
+        "get_features",
+        ("project_id",),
+        read=True,
+        note=(
+            "on an instance without a dedicated features endpoint, epics/workflows/"
+            "parallel_cycles/project_updates come back null -- meaning unknown, not off"
+        ),
+    ),
     Action(
         "update_features",
         ("project_id",),
@@ -93,7 +111,10 @@ ACTIONS = (
             "project_updates",
             "workflows",
         ),
-        note="toggles project features on or off",
+        note=(
+            "toggles project features on or off; on an instance without a dedicated features "
+            "endpoint, epics/workflows/parallel_cycles/project_updates cannot be toggled"
+        ),
     ),
 )
 
@@ -116,6 +137,25 @@ LEGACY = {
 LEGACY_UNMAPPED = {
     "manage_project_archive": "took archive=bool, which spans two actions: use archive or unarchive",
 }
+
+# The dedicated /features endpoint is Cloud-only; self-hosted CE 404s on it (Plane's generic
+# routing 404, caught by route_absent) but serves these same six toggles as fields on the
+# project resource itself, under their older names. epics/workflows/parallel_cycles/
+# project_updates have no equivalent there -- CE does not have those concepts at all -- so a
+# request to toggle one of those on a route-absent instance cannot be served.
+_CE_FIELD = {
+    "modules": "module_view",
+    "cycles": "cycle_view",
+    "views": "issue_views_view",
+    "pages": "page_view",
+    "intakes": "intake_view",
+    "work_item_types": "is_issue_type_enabled",
+}
+
+
+def _feature_from_project(project: Project) -> ProjectFeature:
+    """The CE-visible toggles, read off the project resource itself."""
+    return ProjectFeature(**{toggle: getattr(project, field) for toggle, field in _CE_FIELD.items()})
 
 
 def register(mcp: FastMCP) -> None:
@@ -280,21 +320,41 @@ def register(mcp: FastMCP) -> None:
             return client.projects.get_worklog_summary(workspace_slug=workspace_slug, project_id=project_id)
 
         if action == "get_features":
-            return client.projects.get_features(workspace_slug=workspace_slug, project_id=project_id)
+            return or_fallback(
+                lambda: client.projects.get_features(workspace_slug=workspace_slug, project_id=project_id),
+                lambda: _feature_from_project(
+                    client.projects.retrieve(workspace_slug=workspace_slug, project_id=project_id)
+                ),
+            )
 
-        return client.projects.update_features(
-            workspace_slug=workspace_slug,
-            project_id=project_id,
-            data=ProjectFeature(
-                modules=modules,
-                cycles=cycles,
-                views=views,
-                pages=pages,
-                intakes=intakes,
-                work_item_types=workitem_types,
-                epics=epics,
-                parallel_cycles=parallel_cycles,
-                project_updates=project_updates,
-                workflows=workflows,
+        toggles = {"modules": modules, "cycles": cycles, "views": views, "pages": pages, "intakes": intakes}
+        toggles["work_item_types"] = workitem_types
+        cloud_only = {
+            "epics": epics,
+            "workflows": workflows,
+            "parallel_cycles": parallel_cycles,
+            "project_updates": project_updates,
+        }
+
+        def _update_on_ce() -> ProjectFeature | str:
+            requested = [toggle for toggle, value in cloud_only.items() if value is not None]
+            if requested:
+                return (
+                    f"Error: {', '.join(requested)} cannot be toggled on this instance; "
+                    f"only {', '.join(_CE_FIELD)} are available here."
+                )
+            updated_project = client.projects.update(
+                workspace_slug=workspace_slug,
+                project_id=project_id,
+                data=UpdateProject(**{_CE_FIELD[toggle]: value for toggle, value in toggles.items()}),
+            )
+            return _feature_from_project(updated_project)
+
+        return or_fallback(
+            lambda: client.projects.update_features(
+                workspace_slug=workspace_slug,
+                project_id=project_id,
+                data=ProjectFeature(**toggles, **cloud_only),
             ),
+            _update_on_ce,
         )

@@ -36,6 +36,7 @@ from plane_mcp.toolkit import (
     needs,
     one_of,
     opt,
+    or_fallback,
     route_absent,
 )
 
@@ -128,23 +129,9 @@ LEGACY = {
 }
 
 
-def _or_fallback(call: Callable[[], Any], on_route_absent: Callable[[], Any]) -> Any:
-    """Run `call`; a route-absent 404 runs `on_route_absent` instead of raising.
-
-    A genuine 404 from `call` always propagates, and so does one raised by
-    `on_route_absent` itself -- this only ever catches `call`'s own exception.
-    """
-    try:
-        return call()
-    except HttpError as exc:
-        if not route_absent(exc):
-            raise
-        return on_route_absent()
-
-
 def _or_unavailable(call: Callable[[], Any]) -> Any:
     """Run `call`; a route-absent 404 answers the standard message instead of raising."""
-    return _or_fallback(call, lambda: _DEFINITIONS_UNAVAILABLE)
+    return or_fallback(call, lambda: _DEFINITIONS_UNAVAILABLE)
 
 
 def _all_definitions(client, workspace_slug: str, is_default, is_active) -> list[WorkItemRelationDefinition]:
@@ -270,7 +257,7 @@ def register(mcp: FastMCP) -> None:
                     workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
                 ).model_dump()
 
-            dependencies = _or_fallback(
+            dependencies = or_fallback(
                 lambda: client.work_items.dependencies.list(
                     workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
                 ).model_dump(),
@@ -281,7 +268,7 @@ def register(mcp: FastMCP) -> None:
                 notes.append(_CUSTOM_LIST_UNAVAILABLE_NOTE)
                 return {}
 
-            custom = _or_fallback(
+            custom = or_fallback(
                 lambda: {
                     label: [item.model_dump() for item in items]
                     for label, items in client.work_items.custom_relations.list(
@@ -320,9 +307,9 @@ def register(mcp: FastMCP) -> None:
                     return None
 
                 def _create_fallback() -> None | str:
-                    return _or_fallback(_create_relations, lambda: _CREATE_UNAVAILABLE_EVERYWHERE)
+                    return or_fallback(_create_relations, lambda: _CREATE_UNAVAILABLE_EVERYWHERE)
 
-                return _or_fallback(
+                return or_fallback(
                     lambda: client.work_items.dependencies.create(
                         workspace_slug=workspace_slug,
                         project_id=project_id,
@@ -376,12 +363,12 @@ def register(mcp: FastMCP) -> None:
             )
             return None
 
-        return _or_fallback(
+        return or_fallback(
             lambda: primary(
                 workspace_slug=workspace_slug,
                 project_id=project_id,
                 work_item_id=workitem_id,
                 related_work_item_id=related_workitem_id,
             ),
-            lambda: _or_fallback(_delete_relations, lambda: _DELETE_UNAVAILABLE_EVERYWHERE),
+            lambda: or_fallback(_delete_relations, lambda: _DELETE_UNAVAILABLE_EVERYWHERE),
         )

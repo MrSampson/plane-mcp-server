@@ -26,6 +26,7 @@ from __future__ import annotations
 from plane_mcp.toolkit.governance import (
     WORK_ITEM_TYPES,
     migration_in_progress,
+    or_fallback,
     plan_gated,
     plan_required,
     project_owns,
@@ -72,6 +73,7 @@ __all__ = [
     "needs",
     "one_of",
     "opt",
+    "or_fallback",
     "rich_text",
     "page_params",
     "plan_gated",
