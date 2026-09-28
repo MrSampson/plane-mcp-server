@@ -1,11 +1,15 @@
 """Self-hosted Plane CE does not serve the dedicated project-features endpoint.
 
 `get_features`/`update_features` route to `/projects/{id}/features`, which 404s on
-CE with Plane's generic routing 404. The six toggles CE does support live as
-fields on the project resource itself, under older names, so both actions fall
-back to reading/writing the project directly. `epics`/`workflows`/
-`parallel_cycles`/`project_updates` have no equivalent on CE at all and must
-error rather than being silently dropped.
+CE with Plane's generic routing 404. Five of the ten toggles live as fields on the
+project resource itself, under older names, so both actions fall back to
+reading/writing the project directly. `epics`/`workflows`/`parallel_cycles`/
+`project_updates` have no equivalent field on CE at all. `workitem_types` is
+grouped with them too, for a different reason verified against a live self-hosted
+CE 1.4.0 instance: `is_issue_type_enabled` round-trips through the same base-project
+PATCH, but none of the work-item-type routes exist on CE regardless of its value, so
+reporting the round-tripped flag as success would be a silent no-op. All five of
+these must error rather than being silently dropped or falsely reported as applied.
 """
 
 from __future__ import annotations
@@ -56,7 +60,18 @@ def test_get_features_falls_back_to_the_project_resource_on_ce(registered, spy):
     assert result.views is True
     assert result.pages is False
     assert result.intakes is True
-    assert result.work_item_types is True
+
+
+def test_get_features_never_reports_work_item_types_from_ce(registered, spy):
+    """`is_issue_type_enabled` round-trips through the base project PATCH on CE, but the
+    flag has no effect there (verified live) -- echoing it back would misrepresent a stored
+    but functionally inert value as a working toggle, so it must stay unknown (None)."""
+    spy.returns["projects.get_features"] = ROUTE_ABSENT
+    spy.returns["projects.retrieve"] = _CE_PROJECT  # is_issue_type_enabled=True on this fixture
+
+    result = registered["project"].fn(action="get_features", project_id="proj-1")
+
+    assert result.work_item_types is None
 
 
 def test_update_features_uses_the_dedicated_endpoint_when_it_exists(registered, spy):
@@ -76,18 +91,15 @@ def test_update_features_falls_back_to_updating_the_project_on_ce(registered, sp
     spy.returns["projects.update_features"] = ROUTE_ABSENT
     spy.returns["projects.update"] = _CE_PROJECT
 
-    result = registered["project"].fn(
-        action="update_features", project_id="proj-1", modules=True, cycles=False, workitem_types=True
-    )
+    result = registered["project"].fn(action="update_features", project_id="proj-1", modules=True, cycles=False)
 
     assert spy.recorder.methods == ["projects.update_features", "projects.update"]
     fallback = spy.recorder.calls[-1]
     assert fallback.kwargs["data"].module_view is True
     assert fallback.kwargs["data"].cycle_view is False
-    assert fallback.kwargs["data"].is_issue_type_enabled is True
+    assert fallback.kwargs["data"].is_issue_type_enabled is None
     assert result.modules is True
     assert result.cycles is False
-    assert result.work_item_types is True
 
 
 def test_update_features_leaves_omitted_toggles_unset_in_the_fallback(registered, spy):
@@ -107,9 +119,9 @@ def test_update_features_leaves_omitted_toggles_unset_in_the_fallback(registered
     assert fallback_data.is_issue_type_enabled is None
 
 
-@pytest.mark.parametrize("toggle", ["epics", "workflows", "parallel_cycles", "project_updates"])
+@pytest.mark.parametrize("toggle", ["epics", "workflows", "parallel_cycles", "project_updates", "workitem_types"])
 @pytest.mark.parametrize("value", [True, False])
-def test_update_features_rejects_cloud_only_toggles_on_ce(registered, spy, toggle, value):
+def test_update_features_rejects_unsupported_toggles_on_ce(registered, spy, toggle, value):
     spy.returns["projects.update_features"] = ROUTE_ABSENT
 
     result = registered["project"].fn(action="update_features", project_id="proj-1", **{toggle: value})
@@ -120,7 +132,7 @@ def test_update_features_rejects_cloud_only_toggles_on_ce(registered, spy, toggl
 
 
 def test_update_features_rejects_a_mixed_request_without_writing_anything(registered, spy):
-    """A CE toggle alongside a Cloud-only one must refuse whole, not partially apply."""
+    """A CE toggle alongside an unsupported one must refuse whole, not partially apply."""
     spy.returns["projects.update_features"] = ROUTE_ABSENT
 
     result = registered["project"].fn(action="update_features", project_id="proj-1", modules=True, epics=True)

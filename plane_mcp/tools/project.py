@@ -93,7 +93,7 @@ ACTIONS = (
         read=True,
         note=(
             "on an instance without a dedicated features endpoint, epics/workflows/"
-            "parallel_cycles/project_updates come back null -- meaning unknown, not off"
+            "parallel_cycles/project_updates/workitem_types come back null -- meaning unknown, not off"
         ),
     ),
     Action(
@@ -113,7 +113,7 @@ ACTIONS = (
         ),
         note=(
             "toggles project features on or off; on an instance without a dedicated features "
-            "endpoint, epics/workflows/parallel_cycles/project_updates cannot be toggled"
+            "endpoint, epics/workflows/parallel_cycles/project_updates/workitem_types cannot be toggled"
         ),
     ),
 )
@@ -139,22 +139,28 @@ LEGACY_UNMAPPED = {
 }
 
 # The dedicated /features endpoint is Cloud-only; self-hosted CE 404s on it (Plane's generic
-# routing 404, caught by route_absent) but serves these same six toggles as fields on the
+# routing 404, caught by route_absent) but serves five of these ten toggles as fields on the
 # project resource itself, under their older names. epics/workflows/parallel_cycles/
-# project_updates have no equivalent there -- CE does not have those concepts at all -- so a
-# request to toggle one of those on a route-absent instance cannot be served.
+# project_updates have no equivalent there -- CE does not have those concepts at all.
+# work_item_types is the odd one out: `is_issue_type_enabled` does exist on the project
+# resource and the PATCH round-trips it, but on a self-hosted CE 1.4.0 instance none of the
+# work-item-type routes exist regardless of its value (verified live), so setting it there
+# would silently do nothing -- treated the same as the four that are genuinely absent.
 _CE_FIELD = {
     "modules": "module_view",
     "cycles": "cycle_view",
     "views": "issue_views_view",
     "pages": "page_view",
     "intakes": "intake_view",
-    "work_item_types": "is_issue_type_enabled",
 }
 
 
 def _feature_from_project(project: Project) -> ProjectFeature:
-    """The CE-visible toggles, read off the project resource itself."""
+    """The CE-visible toggles, read off the project resource itself.
+
+    work_item_types is deliberately left unset (None, meaning unknown) -- see the note on
+    `_CE_FIELD` above.
+    """
     return ProjectFeature(**{toggle: getattr(project, field) for toggle, field in _CE_FIELD.items()})
 
 
@@ -328,8 +334,11 @@ def register(mcp: FastMCP) -> None:
             )
 
         toggles = {"modules": modules, "cycles": cycles, "views": views, "pages": pages, "intakes": intakes}
-        toggles["work_item_types"] = workitem_types
-        cloud_only = {
+        # workitem_types is grouped with the genuinely Cloud-only toggles, not with `toggles`
+        # above: it round-trips through the base project PATCH on CE but has no effect there
+        # (see the note on `_CE_FIELD`), so claiming to set it would be a silent no-op.
+        unsupported_on_ce = {
+            "workitem_types": workitem_types,
             "epics": epics,
             "workflows": workflows,
             "parallel_cycles": parallel_cycles,
@@ -337,7 +346,7 @@ def register(mcp: FastMCP) -> None:
         }
 
         def _update_on_ce() -> ProjectFeature | str:
-            requested = [toggle for toggle, value in cloud_only.items() if value is not None]
+            requested = [toggle for toggle, value in unsupported_on_ce.items() if value is not None]
             if requested:
                 return (
                     f"Error: {', '.join(requested)} cannot be toggled on this instance; "
@@ -354,7 +363,14 @@ def register(mcp: FastMCP) -> None:
             lambda: client.projects.update_features(
                 workspace_slug=workspace_slug,
                 project_id=project_id,
-                data=ProjectFeature(**toggles, **cloud_only),
+                data=ProjectFeature(
+                    **toggles,
+                    work_item_types=workitem_types,
+                    epics=epics,
+                    workflows=workflows,
+                    parallel_cycles=parallel_cycles,
+                    project_updates=project_updates,
+                ),
             ),
             _update_on_ce,
         )
