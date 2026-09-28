@@ -1,7 +1,7 @@
 """Self-hosted Plane CE does not serve the dedicated project-features endpoint.
 
 `get_features`/`update_features` route to `/projects/{id}/features`, which 404s on
-CE with Plane's generic routing 404. The five toggles CE does support live as
+CE with Plane's generic routing 404. The six toggles CE does support live as
 fields on the project resource itself, under older names, so both actions fall
 back to reading/writing the project directly. `epics`/`workflows`/
 `parallel_cycles`/`project_updates` have no equivalent on CE at all and must
@@ -90,12 +90,49 @@ def test_update_features_falls_back_to_updating_the_project_on_ce(registered, sp
     assert result.work_item_types is True
 
 
+def test_update_features_leaves_omitted_toggles_unset_in_the_fallback(registered, spy):
+    """`data.model_dump(exclude_none=True)` is what makes 'omitted ones are left as they
+    are' true -- pin that the fallback payload actually carries None for what wasn't passed,
+    not just that the toggles under test made it through."""
+    spy.returns["projects.update_features"] = ROUTE_ABSENT
+    spy.returns["projects.update"] = _CE_PROJECT
+
+    registered["project"].fn(action="update_features", project_id="proj-1", modules=True)
+
+    fallback_data = spy.recorder.calls[-1].kwargs["data"]
+    assert fallback_data.cycle_view is None
+    assert fallback_data.issue_views_view is None
+    assert fallback_data.page_view is None
+    assert fallback_data.intake_view is None
+    assert fallback_data.is_issue_type_enabled is None
+
+
 @pytest.mark.parametrize("toggle", ["epics", "workflows", "parallel_cycles", "project_updates"])
-def test_update_features_rejects_cloud_only_toggles_on_ce(registered, spy, toggle):
+@pytest.mark.parametrize("value", [True, False])
+def test_update_features_rejects_cloud_only_toggles_on_ce(registered, spy, toggle, value):
     spy.returns["projects.update_features"] = ROUTE_ABSENT
 
-    result = registered["project"].fn(action="update_features", project_id="proj-1", **{toggle: True})
+    result = registered["project"].fn(action="update_features", project_id="proj-1", **{toggle: value})
 
     assert spy.recorder.methods == ["projects.update_features"]
     assert result.startswith("Error:")
     assert toggle in result
+
+
+def test_update_features_rejects_a_mixed_request_without_writing_anything(registered, spy):
+    """A CE toggle alongside a Cloud-only one must refuse whole, not partially apply."""
+    spy.returns["projects.update_features"] = ROUTE_ABSENT
+
+    result = registered["project"].fn(action="update_features", project_id="proj-1", modules=True, epics=True)
+
+    assert spy.recorder.methods == ["projects.update_features"]
+    assert result.startswith("Error:")
+    assert "epics" in result
+
+
+def test_get_features_propagates_an_error_from_the_fallback_itself(registered, spy):
+    spy.returns["projects.get_features"] = ROUTE_ABSENT
+    spy.returns["projects.retrieve"] = ID_NOT_FOUND
+
+    with pytest.raises(HttpError):
+        registered["project"].fn(action="get_features", project_id="proj-1")

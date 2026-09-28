@@ -116,6 +116,20 @@ def route_absent(exc: HttpError) -> bool:
     return exc.status_code == 404 and isinstance(exc.response, dict) and exc.response.get("error") == ROUTE_ABSENT_ERROR
 
 
+def or_fallback(call: Callable[[], Any], on_route_absent: Callable[[], Any]) -> Any:
+    """Run `call`; a route-absent 404 runs `on_route_absent` instead of raising.
+
+    A genuine 404 from `call` always propagates, and so does one raised by
+    `on_route_absent` itself -- this only ever catches `call`'s own exception.
+    """
+    try:
+        return call()
+    except HttpError as exc:
+        if not route_absent(exc):
+            raise
+        return on_route_absent()
+
+
 def plan_required(exc: HttpError, feature: str) -> str | None:
     """A message naming the gated feature when the plan does not include it, else None."""
     if exc.status_code == 402 or (exc.status_code == 400 and PLAN_GATE_PROSE in str(exc).lower()):
