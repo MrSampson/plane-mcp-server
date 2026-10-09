@@ -10,13 +10,19 @@ never on a 404 that means "this particular id does not exist".
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from plane.errors.errors import HttpError
+from plane.models.enums import WorkItemRelationTypeEnum
 
 from plane_mcp.toolkit.governance import ROUTE_ABSENT_ERROR
-from plane_mcp.tools.workitem_relation import DEPENDENCY_TYPES
+from plane_mcp.tools.workitem_relation import (
+    _CREATE_PLAIN_UNAVAILABLE,
+    DEPENDENCY_TYPES,
+    FOOTER,
+    PLAIN_TYPES,
+)
 
 ROUTE_ABSENT = HttpError("Not Found", status_code=404, response={"error": ROUTE_ABSENT_ERROR})
 ID_NOT_FOUND = HttpError("Not Found", status_code=404, response={"detail": "Not found."})
@@ -296,6 +302,85 @@ def test_create_dependency_target_is_not_restricted_to_the_source_project(relati
     assert call.kwargs["data"].relation_type == relation_type
 
 
+# --- create: plain relations (relates_to, duplicate) ---
+
+
+def test_plain_types_cover_every_sdk_type_the_dependency_endpoint_lacks() -> None:
+    """A type the SDK adds must be decided on (plain or directional), not silently routed."""
+    assert set(get_args(WorkItemRelationTypeEnum)) == set(DEPENDENCY_TYPES) | set(PLAIN_TYPES)
+    assert set(PLAIN_TYPES) == {"relates_to", "duplicate"}
+
+
+def test_footer_advertises_the_plain_types() -> None:
+    for relation_type in PLAIN_TYPES:
+        assert relation_type in FOOTER
+
+
+@pytest.mark.parametrize("relation_type", PLAIN_TYPES)
+def test_create_plain_relation_goes_to_the_unified_endpoint_only(
+    relation_type: str, registered: dict[str, Any], spy: Any
+) -> None:
+    result = registered["workitem_relation"].fn(
+        action="create",
+        project_id="proj-1",
+        workitem_id="wi-1",
+        workitem_ids=["other-project-wi-9"],
+        relation_type=relation_type,
+    )
+
+    call = spy.recorder.only()
+    assert call.method == "work_items.relations.create"
+    assert call.kwargs["data"].relation_type == relation_type
+    assert call.kwargs["data"].issues == ["other-project-wi-9"]
+    assert result is None
+
+
+def test_create_plain_relation_reports_when_the_unified_route_is_absent(registered: dict[str, Any], spy: Any) -> None:
+    spy.returns["work_items.relations.create"] = ROUTE_ABSENT
+
+    result = registered["workitem_relation"].fn(
+        action="create", project_id="proj-1", workitem_id="wi-1", workitem_ids=["wi-2"], relation_type="relates_to"
+    )
+
+    assert result == _CREATE_PLAIN_UNAVAILABLE
+    assert "dependency endpoint" not in result
+
+
+def test_create_plain_relation_propagates_a_genuine_error(registered: dict[str, Any], spy: Any) -> None:
+    spy.returns["work_items.relations.create"] = ID_NOT_FOUND
+
+    with pytest.raises(HttpError):
+        registered["workitem_relation"].fn(
+            action="create", project_id="proj-1", workitem_id="wi-1", workitem_ids=["wi-2"], relation_type="duplicate"
+        )
+
+
+def test_create_still_refuses_an_unknown_relation_type(registered: dict[str, Any], spy: Any) -> None:
+    result = registered["workitem_relation"].fn(
+        action="create", project_id="proj-1", workitem_id="wi-1", workitem_ids=["wi-2"], relation_type="parent_of"
+    )
+
+    assert isinstance(result, str) and result.startswith("Error:")
+    assert all(t in result for t in (*DEPENDENCY_TYPES, *PLAIN_TYPES))
+    assert spy.recorder.calls == []
+
+
+def test_create_with_neither_type_nor_definition_names_plain_relations(registered: dict[str, Any], spy: Any) -> None:
+    result = registered["workitem_relation"].fn(
+        action="create", project_id="proj-1", workitem_id="wi-1", workitem_ids=["wi-2"]
+    )
+
+    assert "plain relation" in result
+    assert spy.recorder.calls == []
+
+
+def test_list_definitions_offers_the_plain_relations(registered: dict[str, Any], spy: Any) -> None:
+    result = registered["workitem_relation"].fn(action="list_definitions")
+
+    assert result["plain_relations"] == list(PLAIN_TYPES)
+    assert result["built_in_dependencies"] == list(DEPENDENCY_TYPES)
+
+
 def test_create_advertises_cross_project_targets(resource_modules):
     """The capability above is silent to a calling agent unless the tool's own
     description says so -- an agent has no reason to assume workitem_ids can
@@ -461,7 +546,8 @@ def test_list_definitions_reports_when_the_route_is_absent(registered, spy):
     result = registered["workitem_relation"].fn(action="list_definitions")
 
     assert result["custom_definitions"] == []
-    assert result["built_in_dependencies"]
+    assert result["built_in_dependencies"] == list(DEPENDENCY_TYPES)
+    assert result["plain_relations"] == list(PLAIN_TYPES)
     assert "not available on this instance" in result["note"]
     assert not result["note"].startswith("Error:")
 
