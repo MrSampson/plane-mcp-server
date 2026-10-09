@@ -9,7 +9,7 @@ work items, cycles, modules, releases, customers and more.
 Built on [FastMCP](https://github.com/jlowin/fastmcp) and the official
 [`plane-sdk`](https://pypi.org/project/plane-sdk/).
 
-- **30 tools**, one per Plane resource, covering 204 operations
+- **30 tools**, one per Plane resource, covering 207 operations
 - **Local or remote** — stdio, streamable HTTP, SSE
 - **OAuth or API key** authentication
 
@@ -176,6 +176,15 @@ unchanged.
 
 The remote transports carry credentials in the connection — the OAuth flow or the
 PAT headers — and need none of these.
+
+### Outbound proxy for attachment uploads
+
+`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` (and their lowercase forms) are honored
+for the attachment-upload-from-URL fetch (`upload_from_url`). When a proxy
+applies to a given request, **the proxy — not this server — is that request's
+SSRF control**: the server does not pin or validate the target's resolved
+address itself, since the proxy connects to and resolves the target
+independently. Scope `NO_PROXY` and proxy egress policy accordingly.
 
 Self-hosting the server itself:
 
