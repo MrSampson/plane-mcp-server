@@ -1,8 +1,9 @@
 """Relations between work items, and the workspace definitions that type them.
 
-Two systems behind one tool: built-in dependencies (six fixed directional types)
-and custom relations (workspace-defined, each with an outward and inward label).
-`create` routes between them by which arguments are supplied.
+Three kinds behind one tool: built-in dependencies (six fixed directional types),
+plain relations (`relates_to` and `duplicate`, served only by the unified relations
+endpoint) and custom relations (workspace-defined, each with an outward and inward
+label). `create` routes between them by which arguments are supplied.
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ from typing import Any, Literal, get_args
 
 from fastmcp import FastMCP
 from plane.errors.errors import HttpError
-from plane.models.enums import WorkItemRelationTypeEnum
 from plane.models.work_item_relation_definitions import (
     CreateWorkItemRelationDefinition,
     PaginatedWorkItemRelationDefinitionResponse,
@@ -46,10 +46,10 @@ TITLE = "Work item relations"
 
 DEPENDENCY_TYPES: tuple[str, ...] = get_args(DependencyTypeEnum)
 
-# Symmetric relations the unified `/relations/` endpoint carries but the dependency
-# endpoint (and its request model) does not: "related to" and "duplicate". Derived from
-# the SDK's full enum so a type the SDK adds shows up here instead of being refused.
-PLAIN_TYPES: tuple[str, ...] = tuple(t for t in get_args(WorkItemRelationTypeEnum) if t not in DEPENDENCY_TYPES)
+# Relations the unified `/relations/` endpoint carries but the dependency endpoint (and
+# its request model) does not. Listed rather than derived from the SDK enum: a type the
+# SDK adds later may be directional and need a decision, which the test below forces.
+PLAIN_TYPES: tuple[str, ...] = ("relates_to", "duplicate")
 RELATION_TYPES: tuple[str, ...] = (*DEPENDENCY_TYPES, *PLAIN_TYPES)
 
 _OTHER_RELATIONS = (
@@ -58,7 +58,8 @@ _OTHER_RELATIONS = (
 )
 
 _DEFINITIONS_UNAVAILABLE = (
-    "Error: custom relation definitions are not available on this instance; pass a built-in relation_type instead."
+    "Error: custom relation definitions are not available on this instance; pass a "
+    "built_in_dependencies or plain_relations value as relation_type instead."
 )
 
 _DEPENDENCY_FALLBACK_NOTE = (
@@ -90,6 +91,12 @@ _CREATE_UNAVAILABLE_EVERYWHERE = (
     "relations endpoint; the relation could not be created."
 )
 
+# A plain relation never touches the dependency endpoint, so the message must not claim
+# it was tried.
+_CREATE_PLAIN_UNAVAILABLE = (
+    "Error: this instance does not serve the unified relations endpoint; the relation could not be created."
+)
+
 _DELETE_UNAVAILABLE_EVERYWHERE = (
     "Error: this instance serves neither the expected removal endpoint nor the unified "
     "relations endpoint; the relation could not be removed."
@@ -113,7 +120,8 @@ ACTIONS = (
         ("is_dependency",),
         note="removes one relation; dependencies and custom relations are independent, so "
         "is_dependency must match the kind that was created (default false) -- moot on an "
-        "instance with no custom-relation surface, where either value succeeds",
+        "instance with no custom-relation surface, where either value succeeds; removing a "
+        "relates_to or duplicate relation has not been verified on any instance",
         destructive=True,
     ),
     Action("list_definitions", optional=("is_default", "is_active"), read=True),
@@ -237,6 +245,10 @@ def register(mcp: FastMCP) -> None:
         client, workspace_slug = get_plane_client_context()
 
         if action == "list_definitions":
+            built_ins: dict[str, list[str]] = {
+                "built_in_dependencies": list(DEPENDENCY_TYPES),
+                "plain_relations": list(PLAIN_TYPES),
+            }
             try:
                 custom_definitions = [
                     d.model_dump() for d in _all_definitions(client, workspace_slug, is_default, is_active)
@@ -244,17 +256,8 @@ def register(mcp: FastMCP) -> None:
             except HttpError as exc:
                 if not route_absent(exc):
                     raise
-                return {
-                    "built_in_dependencies": list(DEPENDENCY_TYPES),
-                    "plain_relations": list(PLAIN_TYPES),
-                    "custom_definitions": [],
-                    "note": _DEFINITIONS_ABSENT_NOTE,
-                }
-            return {
-                "built_in_dependencies": list(DEPENDENCY_TYPES),
-                "plain_relations": list(PLAIN_TYPES),
-                "custom_definitions": custom_definitions,
-            }
+                return {**built_ins, "custom_definitions": [], "note": _DEFINITIONS_ABSENT_NOTE}
+            return {**built_ins, "custom_definitions": custom_definitions}
 
         if action == "create_definition":
             if not name:
@@ -353,13 +356,10 @@ def register(mcp: FastMCP) -> None:
                     )
                     return None
 
-                def _create_fallback() -> None | str:
-                    return or_fallback(_create_relations, lambda: _CREATE_UNAVAILABLE_EVERYWHERE)
-
                 if relation_type in PLAIN_TYPES:
                     # The dependency endpoint has no such direction, so go straight to
                     # the unified one rather than send it a type it would reject.
-                    return _create_fallback()
+                    return or_fallback(_create_relations, lambda: _CREATE_PLAIN_UNAVAILABLE)
 
                 return or_fallback(
                     lambda: client.work_items.dependencies.create(
@@ -371,7 +371,7 @@ def register(mcp: FastMCP) -> None:
                             work_item_ids=targets,
                         ),
                     ),
-                    _create_fallback,
+                    lambda: or_fallback(_create_relations, lambda: _CREATE_UNAVAILABLE_EVERYWHERE),
                 )
             if relation_definition_id and relation_definition_label:
                 # create's note advertises cross-project targets for workitem_ids
@@ -392,7 +392,7 @@ def register(mcp: FastMCP) -> None:
                     )
                 )
             return (
-                "Error: provide relation_type for a built-in dependency, or both "
+                "Error: provide relation_type for a built-in dependency or plain relation, or both "
                 "relation_definition_id and relation_definition_label for a custom relation. "
                 "Call the list_definitions action to find one."
             )
