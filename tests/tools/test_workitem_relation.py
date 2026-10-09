@@ -48,11 +48,60 @@ def test_list_falls_back_to_relations_when_dependencies_route_is_absent(register
 
     result = registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
 
-    assert "work_items.relations.list" in spy.recorder.methods
-    fallback = spy.recorder.calls[spy.recorder.methods.index("work_items.relations.list")]
-    assert fallback.kwargs["project_id"] == "proj-1"
-    assert fallback.kwargs["work_item_id"] == "wi-1"
+    assert "work_items.relations._get" in spy.recorder.methods
+    fallback = spy.recorder.calls[spy.recorder.methods.index("work_items.relations._get")]
+    assert fallback.kwargs["endpoint"] == "acme/projects/proj-1/work-items/wi-1/relations"
     assert "plain work item ids" in result["note"]
+
+
+# What a self-hosted CE 1.4 `/relations/` answers: each bucket holds objects, not ids.
+CE_RELATIONS = {
+    "blocking": [{"project_id": "proj-2", "issue_id": "wi-2"}],
+    "blocked_by": [],
+    "duplicate": [],
+    "relates_to": [{"project_id": "proj-1", "issue_id": "wi-3"}, {"project_id": "proj-3", "issue_id": "wi-4"}],
+    "start_after": [],
+    "start_before": [],
+    "finish_after": [],
+    "finish_before": [],
+}
+
+
+def _list_on_ce(registered, spy, relations):
+    spy.returns["work_items.dependencies.list"] = ROUTE_ABSENT
+    spy.returns["work_items.relations._get"] = relations
+    return registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
+
+
+def test_list_reads_the_objects_ce_returns_instead_of_failing_validation(registered, spy):
+    """CE answers {project_id, issue_id} objects; the SDK model types every bucket
+    list[str], so going through it raised a ValidationError on any populated bucket."""
+    result = _list_on_ce(registered, spy, CE_RELATIONS)
+
+    assert result["dependencies"]["blocking"] == ["wi-2"]
+    assert result["dependencies"]["relates_to"] == ["wi-3", "wi-4"]
+
+
+def test_list_keeps_every_bucket_the_endpoint_returned(registered, spy):
+    result = _list_on_ce(registered, spy, CE_RELATIONS)
+
+    assert set(result["dependencies"]) == set(CE_RELATIONS)
+    assert result["dependencies"]["duplicate"] == []
+
+
+def test_list_passes_bare_id_buckets_through(registered, spy):
+    result = _list_on_ce(registered, spy, {**CE_RELATIONS, "blocking": ["wi-9"]})
+
+    assert result["dependencies"]["blocking"] == ["wi-9"]
+
+
+def test_list_does_not_drop_an_entry_it_cannot_read(registered, spy):
+    """An object with no recognisable id must surface, not vanish into a shorter list."""
+    odd = {"project_id": "proj-2", "something": "else"}
+
+    result = _list_on_ce(registered, spy, {**CE_RELATIONS, "blocking": [odd]})
+
+    assert result["dependencies"]["blocking"] == [odd]
 
 
 def test_list_does_not_note_anything_when_dependencies_route_exists(registered, spy):
@@ -95,7 +144,7 @@ def test_list_notes_both_gaps_when_the_whole_ce_scenario_fires_at_once(registere
 
     result = registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
 
-    assert "work_items.relations.list" in spy.recorder.methods
+    assert "work_items.relations._get" in spy.recorder.methods
     assert result["custom"] == {}
     assert "plain work item ids" in result["note"]
     assert "not available on this instance" in result["note"]

@@ -59,6 +59,8 @@ _DEPENDENCY_FALLBACK_NOTE = (
     "not objects, and may include duplicate/relates_to alongside the built-in dependency types."
 )
 
+_RELATED_ID_KEYS = ("issue_id", "id")
+
 _CUSTOM_LIST_UNAVAILABLE_NOTE = (
     "Custom relation definitions are not available on this instance, so 'custom' is empty "
     "because that capability is absent here -- not because no custom relations exist."
@@ -132,6 +134,33 @@ LEGACY = {
 def _or_unavailable(call: Callable[[], Any]) -> Any:
     """Run `call`; a route-absent 404 answers the standard message instead of raising."""
     return or_fallback(call, lambda: _DEFINITIONS_UNAVAILABLE)
+
+
+def _related_id(entry: Any) -> Any:
+    """A related work item's id from one relations-bucket entry.
+
+    The unified endpoint answers bare ids on some builds and `{project_id, issue_id}`
+    objects on others (self-hosted CE 1.4). An object with no recognisable id is
+    returned whole rather than dropped, so a shorter list never hides a relation.
+    """
+    if isinstance(entry, dict):
+        for key in _RELATED_ID_KEYS:
+            if entry.get(key):
+                return str(entry[key])
+    return entry
+
+
+def _unified_relations(client, workspace_slug: str, project_id: str, work_item_id: str) -> dict[str, list[Any]]:
+    """Every relation bucket of a work item from the unified `/relations/` endpoint.
+
+    Goes around `client.work_items.relations.list`: that method validates the reply
+    against a model typing every bucket `list[str]`, which rejects the object entries
+    CE returns as soon as any bucket is populated.
+    """
+    raw: dict[str, list[Any]] = client.work_items.relations._get(
+        endpoint=f"{workspace_slug}/projects/{project_id}/work-items/{work_item_id}/relations"
+    )
+    return {bucket: [_related_id(entry) for entry in entries] for bucket, entries in raw.items()}
 
 
 def _all_definitions(client, workspace_slug: str, is_default, is_active) -> list[WorkItemRelationDefinition]:
@@ -253,9 +282,7 @@ def register(mcp: FastMCP) -> None:
 
             def _dependencies_fallback() -> dict[str, Any]:
                 notes.append(_DEPENDENCY_FALLBACK_NOTE)
-                return client.work_items.relations.list(
-                    workspace_slug=workspace_slug, project_id=project_id, work_item_id=workitem_id
-                ).model_dump()
+                return _unified_relations(client, workspace_slug, project_id, workitem_id)
 
             dependencies = or_fallback(
                 lambda: client.work_items.dependencies.list(
