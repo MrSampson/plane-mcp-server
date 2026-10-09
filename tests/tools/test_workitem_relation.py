@@ -317,7 +317,9 @@ def test_footer_advertises_the_plain_types() -> None:
 
 
 @pytest.mark.parametrize("relation_type", PLAIN_TYPES)
-def test_create_plain_relation_goes_to_the_unified_endpoint_only(relation_type, registered, spy) -> None:
+def test_create_plain_relation_goes_to_the_unified_endpoint_only(
+    relation_type: str, registered: dict[str, Any], spy: Any
+) -> None:
     result = registered["workitem_relation"].fn(
         action="create",
         project_id="proj-1",
@@ -333,7 +335,7 @@ def test_create_plain_relation_goes_to_the_unified_endpoint_only(relation_type, 
     assert result is None
 
 
-def test_create_plain_relation_reports_when_the_unified_route_is_absent(registered, spy) -> None:
+def test_create_plain_relation_reports_when_the_unified_route_is_absent(registered: dict[str, Any], spy: Any) -> None:
     spy.returns["work_items.relations.create"] = ROUTE_ABSENT
 
     result = registered["workitem_relation"].fn(
@@ -344,7 +346,7 @@ def test_create_plain_relation_reports_when_the_unified_route_is_absent(register
     assert "dependency endpoint" not in result
 
 
-def test_create_plain_relation_propagates_a_genuine_error(registered, spy) -> None:
+def test_create_plain_relation_propagates_a_genuine_error(registered: dict[str, Any], spy: Any) -> None:
     spy.returns["work_items.relations.create"] = ID_NOT_FOUND
 
     with pytest.raises(HttpError):
@@ -353,7 +355,7 @@ def test_create_plain_relation_propagates_a_genuine_error(registered, spy) -> No
         )
 
 
-def test_create_still_refuses_an_unknown_relation_type(registered, spy) -> None:
+def test_create_still_refuses_an_unknown_relation_type(registered: dict[str, Any], spy: Any) -> None:
     result = registered["workitem_relation"].fn(
         action="create", project_id="proj-1", workitem_id="wi-1", workitem_ids=["wi-2"], relation_type="parent_of"
     )
@@ -363,7 +365,7 @@ def test_create_still_refuses_an_unknown_relation_type(registered, spy) -> None:
     assert spy.recorder.calls == []
 
 
-def test_create_with_neither_type_nor_definition_names_plain_relations(registered, spy) -> None:
+def test_create_with_neither_type_nor_definition_names_plain_relations(registered: dict[str, Any], spy: Any) -> None:
     result = registered["workitem_relation"].fn(
         action="create", project_id="proj-1", workitem_id="wi-1", workitem_ids=["wi-2"]
     )
@@ -372,7 +374,7 @@ def test_create_with_neither_type_nor_definition_names_plain_relations(registere
     assert spy.recorder.calls == []
 
 
-def test_list_definitions_offers_the_plain_relations(registered, spy) -> None:
+def test_list_definitions_offers_the_plain_relations(registered: dict[str, Any], spy: Any) -> None:
     result = registered["workitem_relation"].fn(action="list_definitions")
 
     assert result["plain_relations"] == list(PLAIN_TYPES)
