@@ -16,7 +16,7 @@ import pytest
 from plane.errors.errors import HttpError
 
 from plane_mcp.toolkit.governance import ROUTE_ABSENT_ERROR
-from plane_mcp.tools.workitem_relation import DEPENDENCY_TYPES
+from plane_mcp.tools.workitem_relation import DEPENDENCY_TYPES, PLAIN_TYPES
 
 ROUTE_ABSENT = HttpError("Not Found", status_code=404, response={"error": ROUTE_ABSENT_ERROR})
 ID_NOT_FOUND = HttpError("Not Found", status_code=404, response={"detail": "Not found."})
@@ -294,6 +294,65 @@ def test_create_dependency_target_is_not_restricted_to_the_source_project(relati
     assert call.kwargs["project_id"] == "proj-1"
     assert call.kwargs["data"].work_item_ids == ["other-project-wi-9"]
     assert call.kwargs["data"].relation_type == relation_type
+
+
+# --- create: plain relations (relates_to, duplicate) ---
+
+
+def test_plain_types_are_the_two_the_dependency_endpoint_lacks() -> None:
+    assert set(PLAIN_TYPES) == {"relates_to", "duplicate"}
+
+
+@pytest.mark.parametrize("relation_type", PLAIN_TYPES)
+def test_create_plain_relation_goes_to_the_unified_endpoint_only(relation_type, registered, spy) -> None:
+    result = registered["workitem_relation"].fn(
+        action="create",
+        project_id="proj-1",
+        workitem_id="wi-1",
+        workitem_ids=["other-project-wi-9"],
+        relation_type=relation_type,
+    )
+
+    call = spy.recorder.only()
+    assert call.method == "work_items.relations.create"
+    assert call.kwargs["data"].relation_type == relation_type
+    assert call.kwargs["data"].issues == ["other-project-wi-9"]
+    assert result is None
+
+
+def test_create_plain_relation_reports_when_the_unified_route_is_absent(registered, spy) -> None:
+    spy.returns["work_items.relations.create"] = ROUTE_ABSENT
+
+    result = registered["workitem_relation"].fn(
+        action="create", project_id="proj-1", workitem_id="wi-1", workitem_ids=["wi-2"], relation_type="relates_to"
+    )
+
+    assert isinstance(result, str) and result.startswith("Error:")
+
+
+def test_create_plain_relation_propagates_a_genuine_error(registered, spy) -> None:
+    spy.returns["work_items.relations.create"] = ID_NOT_FOUND
+
+    with pytest.raises(HttpError):
+        registered["workitem_relation"].fn(
+            action="create", project_id="proj-1", workitem_id="wi-1", workitem_ids=["wi-2"], relation_type="duplicate"
+        )
+
+
+def test_create_still_refuses_an_unknown_relation_type(registered, spy) -> None:
+    result = registered["workitem_relation"].fn(
+        action="create", project_id="proj-1", workitem_id="wi-1", workitem_ids=["wi-2"], relation_type="parent_of"
+    )
+
+    assert isinstance(result, str) and result.startswith("Error:")
+    assert spy.recorder.calls == []
+
+
+def test_list_definitions_offers_the_plain_relations(registered, spy) -> None:
+    result = registered["workitem_relation"].fn(action="list_definitions")
+
+    assert result["plain_relations"] == list(PLAIN_TYPES)
+    assert result["built_in_dependencies"] == list(DEPENDENCY_TYPES)
 
 
 def test_create_advertises_cross_project_targets(resource_modules):

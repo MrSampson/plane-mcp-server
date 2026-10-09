@@ -12,6 +12,7 @@ from typing import Any, Literal, get_args
 
 from fastmcp import FastMCP
 from plane.errors.errors import HttpError
+from plane.models.enums import WorkItemRelationTypeEnum
 from plane.models.work_item_relation_definitions import (
     CreateWorkItemRelationDefinition,
     PaginatedWorkItemRelationDefinitionResponse,
@@ -45,6 +46,12 @@ TITLE = "Work item relations"
 
 DEPENDENCY_TYPES: tuple[str, ...] = get_args(DependencyTypeEnum)
 
+# Symmetric relations the unified `/relations/` endpoint carries but the dependency
+# endpoint (and its request model) does not: "related to" and "duplicate". Derived from
+# the SDK's full enum so a type the SDK adds shows up here instead of being refused.
+PLAIN_TYPES: tuple[str, ...] = tuple(t for t in get_args(WorkItemRelationTypeEnum) if t not in DEPENDENCY_TYPES)
+RELATION_TYPES: tuple[str, ...] = (*DEPENDENCY_TYPES, *PLAIN_TYPES)
+
 _OTHER_RELATIONS = (
     "For any other relationship pass relation_definition_id and "
     "relation_definition_label from the list_definitions action."
@@ -72,7 +79,7 @@ _CUSTOM_LIST_UNAVAILABLE_NOTE = (
 _DEFINITIONS_ABSENT_NOTE = (
     "Custom relation definitions are not available on this instance, so custom_definitions is "
     "empty because that capability is absent here -- not because none are defined. Use a "
-    "built_in_dependencies value in relation_type."
+    "built_in_dependencies or plain_relations value in relation_type."
 )
 
 # The instance serves neither the built-in nor the unified surface for this
@@ -94,7 +101,9 @@ ACTIONS = (
         "create",
         ("project_id", "workitem_id", "workitem_ids"),
         ("relation_type", "relation_definition_id", "relation_definition_label"),
-        note="pass relation_type for a dependency, or definition id + label for a custom relation; "
+        note="pass relation_type for a dependency or a plain relation (relates_to, duplicate), or "
+        "definition id + label for a custom relation; a relation created by mistake may not be "
+        "removable through this tool on a self-hosted instance; "
         "workitem_ids may name work items in any project of the workspace, not just the one "
         "project_id names",
     ),
@@ -115,7 +124,8 @@ ACTIONS = (
 
 FOOTER = (
     "Call list_definitions first and match the user's wording to an entry. A "
-    f"built_in_dependencies value ({', '.join(DEPENDENCY_TYPES)}) goes in relation_type; a "
+    f"built_in_dependencies value ({', '.join(DEPENDENCY_TYPES)}) or plain_relations value "
+    f"({', '.join(PLAIN_TYPES)}) goes in relation_type; a "
     "custom definition needs its id in relation_definition_id and the matched outward or "
     "inward label in relation_definition_label, which sets direction."
 )
@@ -236,11 +246,13 @@ def register(mcp: FastMCP) -> None:
                     raise
                 return {
                     "built_in_dependencies": list(DEPENDENCY_TYPES),
+                    "plain_relations": list(PLAIN_TYPES),
                     "custom_definitions": [],
                     "note": _DEFINITIONS_ABSENT_NOTE,
                 }
             return {
                 "built_in_dependencies": list(DEPENDENCY_TYPES),
+                "plain_relations": list(PLAIN_TYPES),
                 "custom_definitions": custom_definitions,
             }
 
@@ -322,7 +334,7 @@ def register(mcp: FastMCP) -> None:
             if not targets:
                 return missing(action, "workitem_ids")
             if relation_type:
-                if error := one_of("relation_type", relation_type, DEPENDENCY_TYPES, _OTHER_RELATIONS):
+                if error := one_of("relation_type", relation_type, RELATION_TYPES, _OTHER_RELATIONS):
                     return error
 
                 def _create_relations() -> None:
@@ -343,6 +355,11 @@ def register(mcp: FastMCP) -> None:
 
                 def _create_fallback() -> None | str:
                     return or_fallback(_create_relations, lambda: _CREATE_UNAVAILABLE_EVERYWHERE)
+
+                if relation_type in PLAIN_TYPES:
+                    # The dependency endpoint has no such direction, so go straight to
+                    # the unified one rather than send it a type it would reject.
+                    return _create_fallback()
 
                 return or_fallback(
                     lambda: client.work_items.dependencies.create(
