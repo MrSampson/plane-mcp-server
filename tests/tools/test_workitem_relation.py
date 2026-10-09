@@ -10,6 +10,8 @@ never on a 404 that means "this particular id does not exist".
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from plane.errors.errors import HttpError
 
@@ -46,12 +48,13 @@ def test_list_falls_back_to_relations_when_dependencies_route_is_absent(register
     under 6 -- so a caller needs telling, not just a silently different dict."""
     spy.returns["work_items.dependencies.list"] = ROUTE_ABSENT
 
+    spy.returns["work_items.relations._get"] = CE_RELATIONS
     result = registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
 
     assert "work_items.relations._get" in spy.recorder.methods
     fallback = spy.recorder.calls[spy.recorder.methods.index("work_items.relations._get")]
     assert fallback.kwargs["endpoint"] == "acme/projects/proj-1/work-items/wi-1/relations"
-    assert "plain work item ids" in result["note"]
+    assert "related work item's id" in result["note"]
 
 
 # What a self-hosted CE 1.4 `/relations/` answers: each bucket holds objects, not ids.
@@ -67,41 +70,74 @@ CE_RELATIONS = {
 }
 
 
-def _list_on_ce(registered, spy, relations):
+def _list_on_ce(registered: dict[str, Any], spy: Any, relations: Any) -> dict[str, Any]:
     spy.returns["work_items.dependencies.list"] = ROUTE_ABSENT
     spy.returns["work_items.relations._get"] = relations
     return registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
 
 
-def test_list_reads_the_objects_ce_returns_instead_of_failing_validation(registered, spy):
+def test_list_reads_the_objects_ce_returns_instead_of_failing_validation(registered, spy) -> None:
     """CE answers {project_id, issue_id} objects; the SDK model types every bucket
     list[str], so going through it raised a ValidationError on any populated bucket."""
     result = _list_on_ce(registered, spy, CE_RELATIONS)
 
-    assert result["dependencies"]["blocking"] == ["wi-2"]
-    assert result["dependencies"]["relates_to"] == ["wi-3", "wi-4"]
+    assert result["dependencies"]["blocking"] == [{"id": "wi-2", "project_id": "proj-2"}]
+    assert result["dependencies"]["relates_to"] == [
+        {"id": "wi-3", "project_id": "proj-1"},
+        {"id": "wi-4", "project_id": "proj-3"},
+    ]
 
 
-def test_list_keeps_every_bucket_the_endpoint_returned(registered, spy):
+def test_list_keeps_the_project_of_a_related_item_in_another_project(registered, spy) -> None:
+    """`workitem retrieve` needs a project_id, so an id alone cannot be followed across projects."""
+    result = _list_on_ce(registered, spy, CE_RELATIONS)
+
+    assert result["dependencies"]["blocking"][0]["project_id"] != "proj-1"
+
+
+def test_list_keeps_every_bucket_the_endpoint_returned(registered, spy) -> None:
     result = _list_on_ce(registered, spy, CE_RELATIONS)
 
     assert set(result["dependencies"]) == set(CE_RELATIONS)
     assert result["dependencies"]["duplicate"] == []
 
 
-def test_list_passes_bare_id_buckets_through(registered, spy):
+def test_list_gives_bare_ids_the_same_shape(registered, spy) -> None:
     result = _list_on_ce(registered, spy, {**CE_RELATIONS, "blocking": ["wi-9"]})
 
-    assert result["dependencies"]["blocking"] == ["wi-9"]
+    assert result["dependencies"]["blocking"] == [{"id": "wi-9"}]
 
 
-def test_list_does_not_drop_an_entry_it_cannot_read(registered, spy):
+def test_list_does_not_drop_an_entry_it_cannot_read(registered, spy) -> None:
     """An object with no recognisable id must surface, not vanish into a shorter list."""
     odd = {"project_id": "proj-2", "something": "else"}
 
     result = _list_on_ce(registered, spy, {**CE_RELATIONS, "blocking": [odd]})
 
     assert result["dependencies"]["blocking"] == [odd]
+
+
+def test_list_does_not_mistake_a_relation_row_id_for_a_work_item_id(registered, spy) -> None:
+    """Only `issue_id` names the related work item; a bare `id` could be the relation row's own."""
+    row = {"id": "relation-row-1", "project_id": "proj-2"}
+
+    result = _list_on_ce(registered, spy, {**CE_RELATIONS, "blocking": [row]})
+
+    assert result["dependencies"]["blocking"] == [row]
+
+
+@pytest.mark.parametrize("body", [None, "<html>ok</html>", []])
+def test_list_refuses_a_body_that_is_not_a_relations_object(body, registered, spy) -> None:
+    """Answering empty here would read as "no relations" -- a proxy page or an empty
+    reply must fail loudly instead."""
+    with pytest.raises(ValueError, match="relations"):
+        _list_on_ce(registered, spy, body)
+
+
+def test_list_tolerates_a_bucket_that_is_null(registered, spy) -> None:
+    result = _list_on_ce(registered, spy, {**CE_RELATIONS, "blocking": None})
+
+    assert result["dependencies"]["blocking"] == []
 
 
 def test_list_does_not_note_anything_when_dependencies_route_exists(registered, spy):
@@ -142,11 +178,12 @@ def test_list_notes_both_gaps_when_the_whole_ce_scenario_fires_at_once(registere
     spy.returns["work_items.dependencies.list"] = ROUTE_ABSENT
     spy.returns["work_items.custom_relations.list"] = ROUTE_ABSENT
 
+    spy.returns["work_items.relations._get"] = CE_RELATIONS
     result = registered["workitem_relation"].fn(action="list", project_id="proj-1", workitem_id="wi-1")
 
     assert "work_items.relations._get" in spy.recorder.methods
     assert result["custom"] == {}
-    assert "plain work item ids" in result["note"]
+    assert "related work item's id" in result["note"]
     assert "not available on this instance" in result["note"]
     assert "note" in result
 

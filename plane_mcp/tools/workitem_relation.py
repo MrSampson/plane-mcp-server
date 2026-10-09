@@ -55,11 +55,11 @@ _DEFINITIONS_UNAVAILABLE = (
 )
 
 _DEPENDENCY_FALLBACK_NOTE = (
-    "Served via this instance's unified relations endpoint: values are plain work item ids, "
-    "not objects, and may include duplicate/relates_to alongside the built-in dependency types."
+    "Served via this instance's unified relations endpoint: each entry is the related work item's "
+    "id (with its project_id when the instance reports one), not the full work item, and the "
+    "buckets may include duplicate/relates_to alongside the built-in dependency types."
 )
 
-_RELATED_ID_KEYS = ("issue_id", "id")
 
 _CUSTOM_LIST_UNAVAILABLE_NOTE = (
     "Custom relation definitions are not available on this instance, so 'custom' is empty "
@@ -136,31 +136,39 @@ def _or_unavailable(call: Callable[[], Any]) -> Any:
     return or_fallback(call, lambda: _DEFINITIONS_UNAVAILABLE)
 
 
-def _related_id(entry: Any) -> Any:
-    """A related work item's id from one relations-bucket entry.
+def _related_item(entry: Any) -> Any:
+    """One relations-bucket entry as `{id, project_id}`, the shape of the dependency path.
 
     The unified endpoint answers bare ids on some builds and `{project_id, issue_id}`
-    objects on others (self-hosted CE 1.4). An object with no recognisable id is
-    returned whole rather than dropped, so a shorter list never hides a relation.
+    objects on others (self-hosted CE 1.4). The project is kept because following a
+    relation into another project needs it. Only `issue_id` names the related work
+    item -- a bare `id` could be the relation row's own -- so an object without one is
+    returned whole rather than guessed at or dropped.
     """
-    if isinstance(entry, dict):
-        for key in _RELATED_ID_KEYS:
-            if entry.get(key):
-                return str(entry[key])
+    if isinstance(entry, str):
+        return {"id": entry}
+    if isinstance(entry, dict) and entry.get("issue_id"):
+        related: dict[str, str] = {"id": str(entry["issue_id"])}
+        if entry.get("project_id"):
+            related["project_id"] = str(entry["project_id"])
+        return related
     return entry
 
 
-def _unified_relations(client, workspace_slug: str, project_id: str, work_item_id: str) -> dict[str, list[Any]]:
+def _unified_relations(client: Any, workspace_slug: str, project_id: str, work_item_id: str) -> dict[str, list[Any]]:
     """Every relation bucket of a work item from the unified `/relations/` endpoint.
 
     Goes around `client.work_items.relations.list`: that method validates the reply
     against a model typing every bucket `list[str]`, which rejects the object entries
-    CE returns as soon as any bucket is populated.
+    CE returns as soon as any bucket is populated. The private `_get` is the only
+    way to the raw body; see #31 for returning to the public call.
     """
-    raw: dict[str, list[Any]] = client.work_items.relations._get(
+    raw: Any = client.work_items.relations._get(
         endpoint=f"{workspace_slug}/projects/{project_id}/work-items/{work_item_id}/relations"
     )
-    return {bucket: [_related_id(entry) for entry in entries] for bucket, entries in raw.items()}
+    if not isinstance(raw, dict):
+        raise ValueError(f"the relations endpoint answered {type(raw).__name__}, not an object of buckets")
+    return {bucket: [_related_item(entry) for entry in entries or []] for bucket, entries in raw.items()}
 
 
 def _all_definitions(client, workspace_slug: str, is_default, is_active) -> list[WorkItemRelationDefinition]:
