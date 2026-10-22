@@ -10,6 +10,8 @@ Shared building blocks for the tool surface, split by *when* they act. All re-ex
 | `paging.py` | response | `envelope`, `dump_results`, `pql_failure`, `workitem_page` |
 | `governance.py` | policy | `workspace_owns_resource`, `workspace_owns`, `scoped`, `plan_gated`, `route_absent`, `or_fallback` |
 | `transforms.py` | listing | `StripOutputSchemas` |
+| `graph.py`, `graph_walk.py` | call | the pure relation-graph core (edges, waves, cycles, mermaid) and the bounded walk that feeds it |
+| `relation_graph.py` | call | `assemble_graph` and the SDK readers behind `workitem_relation graph` |
 
 Nothing here knows which catalogue is calling it. Anything encoding this server's own history — the `RESOURCES` tuple, retired names — lives under `tools/`.
 

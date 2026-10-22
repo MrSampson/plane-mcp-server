@@ -10,6 +10,7 @@ never on a 404 that means "this particular id does not exist".
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, get_args
 
 import pytest
@@ -597,3 +598,131 @@ def test_definition_writes_propagate_a_genuine_not_found(action, args, registere
 
     with pytest.raises(HttpError):
         registered["workitem_relation"].fn(action=action, **args)
+
+
+# --- graph ---
+
+
+def _graph(registered: dict[str, Any], spy: Any, **kwargs: Any) -> dict[str, Any]:
+    """`graph` on CE: the dependency route is absent, so every read goes to `/relations/`."""
+    spy.returns["work_items.dependencies.list"] = ROUTE_ABSENT
+    spy.returns["work_items.relations._get"] = {"blocking": [{"project_id": "proj-1", "issue_id": "wi-2"}]}
+    spy.returns.setdefault(
+        "work_items.retrieve",
+        SimpleNamespace(
+            name="x", priority="high", sequence_id=5, project="proj-1", state=SimpleNamespace(name="Todo", group="x")
+        ),
+    )
+    spy.returns["projects.retrieve"] = SimpleNamespace(identifier="PROJ")
+    arguments: dict[str, Any] = {"action": "graph", "project_id": "proj-1", "workitem_id": "wi-1", "depth": 0}
+    arguments.update(kwargs)
+    return registered["workitem_relation"].fn(**arguments)
+
+
+def test_graph_returns_nodes_and_edges_for_a_work_item_seed(registered: dict[str, Any], spy: Any) -> None:
+    result = _graph(registered, spy)
+
+    assert [n["id"] for n in result["nodes"]] == ["wi-1", "wi-2"]
+    assert len(result["edges"]) == 1
+    assert result["truncated"] is False
+    assert "diagram" not in result
+
+
+def test_graph_does_not_expand_past_depth_zero(registered: dict[str, Any], spy: Any) -> None:
+    _graph(registered, spy)
+
+    assert spy.recorder.methods.count("work_items.relations._get") == 1
+
+
+def test_graph_defaults_to_one_hop_beyond_the_seed(registered: dict[str, Any], spy: Any) -> None:
+    arguments: dict[str, Any] = {"depth": None}
+    _graph(registered, spy, **arguments)
+
+    assert spy.recorder.methods.count("work_items.relations._get") == 2
+
+
+def test_graph_stops_asking_a_missing_dependency_route_after_the_first_404(
+    registered: dict[str, Any], spy: Any
+) -> None:
+    _graph(registered, spy, depth=1)
+
+    assert spy.recorder.methods.count("work_items.dependencies.list") == 1
+    assert spy.recorder.methods.count("work_items.relations._get") == 2
+
+
+def test_graph_adds_a_diagram_only_when_asked(registered: dict[str, Any], spy: Any) -> None:
+    result = _graph(registered, spy, format="mermaid")
+
+    assert result["diagram"].startswith("graph TD")
+
+
+def test_graph_takes_a_module_as_its_seed(registered: dict[str, Any], spy: Any) -> None:
+    spy.returns["modules.list_work_items"] = SimpleNamespace(
+        results=[SimpleNamespace(id="wi-1", project="proj-1")], next_page_results=False, next_cursor=""
+    )
+
+    result = _graph(registered, spy, workitem_id="", module_id="mod-1")
+
+    assert "modules.list_work_items" in spy.recorder.methods
+    assert next(n for n in result["nodes"] if n["id"] == "wi-1")["module_ids"] == ["mod-1"]
+
+
+def test_graph_reports_a_module_larger_than_max_items_as_truncated(registered: dict[str, Any], spy: Any) -> None:
+    spy.returns["modules.list_work_items"] = SimpleNamespace(
+        results=[SimpleNamespace(id=f"wi-{n}", project="proj-1") for n in range(4)],
+        next_page_results=False,
+        next_cursor="",
+    )
+
+    result = _graph(registered, spy, workitem_id="", module_id="mod-1", max_items=2)
+
+    assert result["truncated"] is True
+
+
+@pytest.mark.parametrize(
+    "arguments, fragment",
+    [
+        ({"workitem_id": ""}, "workitem_id or module_id"),
+        ({"module_id": "mod-1"}, "only one of workitem_id or module_id"),
+        ({"project_id": ""}, "project_id"),
+        ({"format": "svg"}, "mermaid"),
+        ({"depth": -1}, "depth"),
+        ({"max_items": -1}, "max_items"),
+        ({"max_items": 151}, "at most 150"),
+    ],
+)
+def test_graph_refuses_a_malformed_call_before_reading_anything(
+    registered: dict[str, Any], spy: Any, arguments: dict[str, Any], fragment: str
+) -> None:
+    result = _graph(registered, spy, **arguments)
+
+    assert isinstance(result, str) and fragment in result
+    assert "work_items.relations._get" not in spy.recorder.methods
+    assert "work_items.dependencies.list" not in spy.recorder.methods
+
+
+def test_graph_treats_a_forbidden_seed_as_unreadable_not_an_error(registered: dict[str, Any], spy: Any) -> None:
+    spy.returns["work_items.retrieve"] = HttpError("Forbidden", status_code=403, response={"error": "x"})
+
+    result = _graph(registered, spy)
+
+    assert result["nodes"][0]["unreadable"] is True
+
+
+def test_graph_accepts_the_ceiling_itself(registered: dict[str, Any], spy: Any) -> None:
+    result: dict[str, Any] = _graph(registered, spy, max_items=150)
+
+    assert result["truncated"] is False
+
+
+def test_graph_propagates_a_dependency_error_that_is_not_a_missing_route(registered: dict[str, Any], spy: Any) -> None:
+    spy.returns["work_items.dependencies.list"] = HttpError("Boom", status_code=500, response={"error": "x"})
+    spy.returns["projects.retrieve"] = SimpleNamespace(identifier="PROJ")
+    spy.returns["work_items.retrieve"] = SimpleNamespace(
+        name="x", priority="high", sequence_id=5, project="proj-1", state=SimpleNamespace(name="Todo", group="x")
+    )
+
+    with pytest.raises(HttpError):
+        registered["workitem_relation"].fn(action="graph", project_id="proj-1", workitem_id="wi-1", depth=0)
+
+    assert "work_items.relations._get" not in spy.recorder.methods

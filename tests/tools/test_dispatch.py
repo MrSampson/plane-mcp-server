@@ -55,6 +55,8 @@ CONDITIONAL: dict[tuple[str, str], dict[str, object]] = {
     ("workitem", "count"): {"pql": "state__group = 'started'"},
     ("intake", "update"): {"status": 1},
     ("workitem_relation", "create"): {"relation_type": "blocked_by"},
+    # A graph needs a seed: a work item or a module, not neither.
+    ("workitem_relation", "graph"): {"workitem_id": "id-1"},
     ("workitem_property", "manage_type_properties"): {"attach_ids": "id-1"},
     ("workitem_property", "set_value"): {"value": "text"},
     ("project_estimate", "create_points"): {"points": '[{"value": "1", "key": 0}]'},
