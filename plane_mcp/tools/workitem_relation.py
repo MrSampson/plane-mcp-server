@@ -157,7 +157,8 @@ ACTIONS = (
         "and are left out of order; a boundary node was reached but its own relations were not read, an "
         "unreadable one may not be read by this token; "
         "pass exactly one of workitem_id or module_id as the seed; depth is how many hops beyond the "
-        "seed are read (default 1; 0 reads the seed only); max_items caps items read (default 50), and "
+        "seed are read (default 1; 0 expands the seed only: its neighbours are shown as boundary nodes); "
+        "max_items caps items read (default 50), and "
         "truncated with cut says what the cap left unread; format=mermaid adds a diagram; custom "
         "relations are not included",
         read=True,

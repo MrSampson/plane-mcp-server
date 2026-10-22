@@ -60,7 +60,8 @@ def edges_from_relations(item_id: str, buckets: Mapping[str, Iterable[Mapping[st
 
     A bucket the payload omits is empty. A bucket name this module does not know
     (a custom relation kind, say) is skipped: it carries no ordering the graph can
-    honour, and guessing a direction for it would be worse than leaving it out.
+    honour, and guessing a direction for it would be worse than leaving it out. So is
+    an entry with no id: there is no item to point at.
     """
     edges: list[Edge] = []
     for bucket, entries in buckets.items():
@@ -70,6 +71,8 @@ def edges_from_relations(item_id: str, buckets: Mapping[str, Iterable[Mapping[st
         item_is_source: bool
         edge_type, item_is_source = _BUCKETS[bucket]
         for entry in entries:
+            if not entry.get("id"):
+                continue
             other: str = str(entry["id"])
             if not edge_type.orders:
                 source, target = sorted((item_id, other))
@@ -90,7 +93,7 @@ def related_projects(buckets: Mapping[str, Iterable[Mapping[str, Any]]]) -> dict
     projects: dict[str, str] = {}
     for entries in buckets.values():
         for entry in entries:
-            if entry.get("project_id"):
+            if entry.get("id") and entry.get("project_id"):
                 projects[str(entry["id"])] = str(entry["project_id"])
     return projects
 
@@ -151,7 +154,7 @@ def order(nodes: Iterable[str], edges: Iterable[Edge], unexpanded: Iterable[str]
     cyclic: list[str] = [n for n, why in unordered.items() if why == Unordered.IN_CYCLE]
     open_ended: list[str] = [n for n, why in unordered.items() if why == Unordered.UNEXPANDED]
     for starts, reason in ((cyclic, Unordered.AFTER_CYCLE), (open_ended, Unordered.AFTER_UNEXPANDED)):
-        for node in _reachable(successors, starts):
+        for node in sorted(_reachable(successors, starts)):
             unordered.setdefault(node, reason)
 
     return Ordering(_waves(successors, members - set(unordered)), cycles, unordered)
@@ -223,6 +226,7 @@ def _path_back(successors: Mapping[str, list[str]], component: set[str], start: 
             if target in component and target not in came_from:
                 came_from[target] = node
                 pending.append(target)
+    # Unreachable for a component that loops through `start`; kept so a caller never gets None.
     return [start]
 
 

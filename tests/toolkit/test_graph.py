@@ -291,3 +291,27 @@ def test_a_long_cycle_is_reported_without_recursion() -> None:
     ordering: Ordering = order(names, edges)
 
     assert ordering.cycles == [[*names, names[0]]]
+
+
+# --- entries Plane may serve without an id, and stable output ---
+
+
+def test_an_entry_without_an_id_is_skipped_rather_than_crashing() -> None:
+    payload: dict[str, list[dict[str, str | None]]] = {
+        "blocking": [{"project_id": "p"}, {"id": None}, {"id": "b"}],
+    }
+
+    assert edges_from_relations("a", payload) == [Edge("a", "b", EdgeType.BLOCKING)]
+    assert related_projects({"blocking": [{"id": None, "project_id": "p"}]}) == {}
+
+
+def test_an_unknown_bucket_is_skipped() -> None:
+    assert edges_from_relations("a", {"custom": [{"id": "b"}]}) == []
+
+
+def test_the_unordered_listing_is_in_a_stable_order() -> None:
+    edges: list[Edge] = _blocks(("a", "z"), ("a", "m"), ("a", "c"))
+
+    ordering: Ordering = order(["a", "c", "m", "z"], edges, unexpanded={"a"})
+
+    assert list(ordering.unordered) == ["a", "c", "m", "z"]
