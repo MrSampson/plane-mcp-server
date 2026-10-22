@@ -9,6 +9,7 @@ from plane_mcp.toolkit.graph import (
     Unordered,
     dedupe,
     edges_from_relations,
+    mermaid,
     order,
     related_projects,
 )
@@ -228,3 +229,41 @@ def test_an_unexpanded_item_inside_a_cycle_is_reported_as_the_cycle() -> None:
 
     assert ordering.cycles == [["a", "b", "a"]]
     assert ordering.unordered["b"] == Unordered.IN_CYCLE
+
+
+# --- the diagram is a convenience over the same edges ---
+
+
+def test_a_diagram_names_each_node_by_its_label_and_draws_each_edge() -> None:
+    diagram: str = mermaid({"a": "PROJ-1", "b": "PROJ-2"}, [Edge("a", "b", EdgeType.BLOCKING)])
+
+    assert diagram.splitlines()[0] == "graph TD"
+    assert 'n0["PROJ-1"]' in diagram
+    assert 'n1["PROJ-2"]' in diagram
+    assert "n0 -->|blocking| n1" in diagram
+
+
+def test_a_plain_relation_is_drawn_dotted_without_an_arrow() -> None:
+    diagram: str = mermaid({"a": "A", "b": "B"}, [Edge("a", "b", EdgeType.RELATES_TO)])
+
+    assert "n0 -.-|relates_to| n1" in diagram
+
+
+def test_a_quote_in_a_label_cannot_break_out_of_the_node() -> None:
+    diagram: str = mermaid({"a": 'say "hi"'}, [])
+
+    assert 'n0["say #quot;hi#quot;"]' in diagram
+
+
+def test_flagged_nodes_are_styled_so_unsound_ones_stand_out() -> None:
+    diagram: str = mermaid({"a": "A", "b": "B"}, [], flagged={"b"})
+
+    assert 'n1["B"]:::unordered' in diagram
+    assert "classDef unordered" in diagram
+    assert 'n0["A"]:::unordered' not in diagram
+
+
+def test_an_edge_to_an_unlabelled_node_still_draws_it() -> None:
+    diagram: str = mermaid({"a": "A"}, [Edge("a", "ghost", EdgeType.BLOCKING)])
+
+    assert 'n1["ghost"]' in diagram

@@ -255,3 +255,29 @@ def _components(successors: Mapping[str, list[str]]) -> list[set[str]]:
         if node not in index:
             visit(node)
     return found
+
+
+def mermaid(labels: Mapping[str, str], edges: Iterable[Edge], flagged: Iterable[str] = ()) -> str:
+    """The graph as a mermaid flowchart; `flagged` nodes are styled to stand out.
+
+    Node ids are positional (`n0`, `n1`, ...) because an item id is not a legal
+    mermaid identifier. An edge may name an item with no label; it is drawn under
+    its own id rather than left out.
+    """
+    edge_list: list[Edge] = list(edges)
+    names: dict[str, str] = {}
+    for item_id in [*labels, *(end for e in edge_list for end in (e.source, e.target))]:
+        names.setdefault(item_id, f"n{len(names)}")
+    flagged_ids: set[str] = set(flagged)
+
+    lines: list[str] = ["graph TD"]
+    for item_id, node in names.items():
+        label: str = labels.get(item_id, item_id).replace('"', "#quot;")
+        marker: str = ":::unordered" if item_id in flagged_ids else ""
+        lines.append(f'  {node}["{label}"]{marker}')
+    for edge in edge_list:
+        arrow: str = "-->" if edge.type.orders else "-.-"
+        lines.append(f"  {names[edge.source]} {arrow}|{edge.type}| {names[edge.target]}")
+    if flagged_ids:
+        lines.append("  classDef unordered stroke:#d33,stroke-width:2px,stroke-dasharray:4")
+    return "\n".join(lines)
