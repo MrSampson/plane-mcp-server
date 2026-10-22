@@ -13,7 +13,7 @@ from typing import Any
 from plane.errors.errors import HttpError
 from plane.models.query_params import RetrieveQueryParams, WorkItemQueryParams
 
-from plane_mcp.toolkit.graph import Edge, Ordering, mermaid, order
+from plane_mcp.toolkit.graph import Ordering, mermaid, order
 from plane_mcp.toolkit.graph_walk import Buckets, Ref, Walk, walk
 
 FORBIDDEN: int = 403
@@ -88,19 +88,21 @@ def assemble_graph(
     if diagram:
         result["diagram"] = mermaid(
             names,
-            [Edge(e.source, e.target, e.type) for e in found.edges],
-            flagged={item_id for item_id in ordering.unordered},
+            found.edges,
+            flagged=set(ordering.unordered),
         )
     return result
 
 
 def _identifier(item_id: str, found: Walk, project_identifier: IdentifierLookup) -> str:
+    """`PROJ-N`, or the raw id when the item or its project could not be read."""
     sequence_id: Any = found.details.get(item_id, {}).get("sequence_id")
     prefix: str | None = project_identifier(found.refs[item_id])
     return f"{prefix}-{sequence_id}" if prefix and sequence_id is not None else item_id
 
 
 def _forbidden(exc: HttpError) -> bool:
+    """Whether the caller is not permitted to read what was asked for."""
     return exc.status_code == FORBIDDEN
 
 

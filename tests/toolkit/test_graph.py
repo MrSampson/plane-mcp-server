@@ -267,3 +267,27 @@ def test_an_edge_to_an_unlabelled_node_still_draws_it() -> None:
     diagram: str = mermaid({"a": "A"}, [Edge("a", "ghost", EdgeType.BLOCKING)])
 
     assert 'n1["ghost"]' in diagram
+
+
+# --- a long chain must not exhaust the interpreter stack ---
+
+
+def test_a_chain_longer_than_the_recursion_limit_is_ordered() -> None:
+    size: int = 3000
+    names: list[str] = [f"n{i:05d}" for i in range(size)]
+    edges: list[Edge] = _blocks(*zip(names, names[1:], strict=False))
+
+    ordering: Ordering = order(names, edges)
+
+    assert len(ordering.waves) == size
+    assert ordering.cycles == []
+
+
+def test_a_long_cycle_is_reported_without_recursion() -> None:
+    size: int = 3000
+    names: list[str] = [f"n{i:05d}" for i in range(size)]
+    edges: list[Edge] = _blocks(*zip(names, [*names[1:], names[0]], strict=True))
+
+    ordering: Ordering = order(names, edges)
+
+    assert ordering.cycles == [[*names, names[0]]]

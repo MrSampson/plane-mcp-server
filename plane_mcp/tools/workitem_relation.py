@@ -9,6 +9,7 @@ label). `create` routes between them by which arguments are supplied.
 from __future__ import annotations
 
 from collections.abc import Callable
+from enum import StrEnum
 from typing import Any, Literal, get_args
 
 from fastmcp import FastMCP
@@ -64,7 +65,15 @@ RELATION_TYPES: tuple[str, ...] = (*DEPENDENCY_TYPES, *PLAIN_TYPES)
 # every item read costs a relations call plus a retrieve.
 GRAPH_DEFAULT_DEPTH: int = 1
 GRAPH_DEFAULT_MAX_ITEMS: int = 50
-GRAPH_FORMATS: tuple[str, ...] = ("mermaid",)
+
+
+class GraphFormat(StrEnum):
+    """Extra renderings `graph` can add to its data."""
+
+    MERMAID = "mermaid"
+
+
+GRAPH_FORMATS: tuple[str, ...] = tuple(GraphFormat)
 
 _OTHER_RELATIONS = (
     "For any other relationship pass relation_definition_id and "
@@ -143,11 +152,14 @@ ACTIONS = (
         ("project_id",),
         ("workitem_id", "module_id", "depth", "max_items", "format"),
         note="the shape the relations make across projects and modules: nodes, edges, order (waves; the "
-        "first is startable now; completed and cancelled items are marked settled and left out), cycles, and unordered (items that cannot be placed, with the reason); "
+        "first is startable now), cycles, and unordered (items that cannot be placed, with the reason); "
+        "completed and cancelled items are flagged settled: they stay in nodes and edges but block nothing "
+        "and are left out of order; a boundary node was reached but its own relations were not read, an "
+        "unreadable one may not be read by this token; "
         "pass exactly one of workitem_id or module_id as the seed; depth is how many hops beyond the "
-        "seed are read (default 1; 0 reads the seed only); max_items caps items read (default 50) and "
-        "truncated says when it cut the graph; format=mermaid adds a diagram; custom relations are not "
-        "included",
+        "seed are read (default 1; 0 reads the seed only); max_items caps items read (default 50), and "
+        "truncated with cut says what the cap left unread; format=mermaid adds a diagram; custom "
+        "relations are not included",
         read=True,
     ),
     Action("list_definitions", optional=("is_default", "is_active"), read=True),
@@ -212,6 +224,11 @@ def _unified_relations(client: Any, workspace_slug: str, project_id: str, work_i
     )
     if not isinstance(raw, dict):
         raise ValueError(f"the relations endpoint answered {type(raw).__name__}, not an object of buckets")
+    return _normalised(raw)
+
+
+def _normalised(raw: dict[str, Any]) -> dict[str, list[Any]]:
+    """Each bucket's entries in the one shape `_related_item` produces."""
     return {bucket: [_related_item(entry) for entry in entries or []] for bucket, entries in raw.items()}
 
 
@@ -248,7 +265,7 @@ def _graph_relations(client: Any, workspace_slug: str) -> Callable[[Ref], Bucket
                 raw: dict[str, list[Any]] = client.work_items.dependencies.list(
                     workspace_slug=workspace_slug, project_id=ref.project_id, work_item_id=ref.id
                 ).model_dump()
-                return {bucket: [_related_item(entry) for entry in entries or []] for bucket, entries in raw.items()}
+                return _normalised(raw)
             except HttpError as exc:
                 if not route_absent(exc):
                     raise
@@ -295,7 +312,7 @@ def _graph(
         depth=GRAPH_DEFAULT_DEPTH if depth is None else depth,
         max_items=limit,
         module_id=module_id,
-        diagram=format == "mermaid",
+        diagram=format == GraphFormat.MERMAID,
     )
 
 

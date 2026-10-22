@@ -11,7 +11,8 @@ Nothing here calls Plane: the functions take already-read relation payloads.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections import deque
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -202,58 +203,74 @@ def _cycles(successors: Mapping[str, list[str]]) -> list[list[str]]:
 
 
 def _path_back(successors: Mapping[str, list[str]], component: set[str], start: str) -> list[str]:
-    """A path from `start` that returns to it, staying inside `component`."""
-    path: list[str] = [start]
-    visited: set[str] = set()
+    """A path from `start` that returns to it, staying inside `component`.
 
-    def walk(node: str) -> bool:
+    Breadth-first, so the witness is a shortest cycle through `start` and the search
+    needs no recursion however long the chain is.
+    """
+    came_from: dict[str, str] = {}
+    pending: deque[str] = deque([start])
+    while pending:
+        node: str = pending.popleft()
         for target in successors[node]:
             if target == start:
-                path.append(start)
-                return True
-            if target in component and target not in visited:
-                visited.add(target)
-                path.append(target)
-                if walk(target):
-                    return True
-                path.pop()
-        return False
-
-    walk(start)
-    return path
+                chain: list[str] = []
+                step: str = node
+                while step != start:
+                    chain.append(step)
+                    step = came_from[step]
+                return [start, *reversed(chain), start]
+            if target in component and target not in came_from:
+                came_from[target] = node
+                pending.append(target)
+    return [start]
 
 
 def _components(successors: Mapping[str, list[str]]) -> list[set[str]]:
-    """Strongly connected components (Tarjan), recursion kept shallow by the item cap."""
+    """Strongly connected components (Tarjan), with an explicit stack so depth is unbounded."""
     index: dict[str, int] = {}
     low: dict[str, int] = {}
     stack: list[str] = []
     on_stack: set[str] = set()
     found: list[set[str]] = []
 
-    def visit(node: str) -> None:
-        index[node] = low[node] = len(index)
-        stack.append(node)
-        on_stack.add(node)
-        for target in successors[node]:
-            if target not in index:
-                visit(target)
-                low[node] = min(low[node], low[target])
-            elif target in on_stack:
-                low[node] = min(low[node], index[target])
-        if low[node] == index[node]:
-            component: set[str] = set()
-            while True:
-                member: str = stack.pop()
-                on_stack.discard(member)
-                component.add(member)
-                if member == node:
+    for root in sorted(successors):
+        if root in index:
+            continue
+        index[root] = low[root] = len(index)
+        stack.append(root)
+        on_stack.add(root)
+        frames: list[tuple[str, Iterator[str]]] = [(root, iter(successors[root]))]
+        while frames:
+            node: str
+            targets: Iterator[str]
+            node, targets = frames[-1]
+            descended: bool = False
+            for target in targets:
+                if target not in index:
+                    index[target] = low[target] = len(index)
+                    stack.append(target)
+                    on_stack.add(target)
+                    frames.append((target, iter(successors[target])))
+                    descended = True
                     break
-            found.append(component)
-
-    for node in sorted(successors):
-        if node not in index:
-            visit(node)
+                if target in on_stack:
+                    low[node] = min(low[node], index[target])
+            if descended:
+                continue
+            frames.pop()
+            if frames:
+                parent: str = frames[-1][0]
+                low[parent] = min(low[parent], low[node])
+            if low[node] == index[node]:
+                component: set[str] = set()
+                while True:
+                    member: str = stack.pop()
+                    on_stack.discard(member)
+                    component.add(member)
+                    if member == node:
+                        break
+                found.append(component)
     return found
 
 

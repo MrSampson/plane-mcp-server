@@ -9,7 +9,7 @@ import pytest
 from plane.errors.errors import HttpError
 
 from plane_mcp.toolkit.graph_walk import Ref
-from plane_mcp.toolkit.relation_graph import module_seeds, node_reader, project_identifier_reader
+from plane_mcp.toolkit.relation_graph import module_seeds, node_reader, project_identifier_reader, relations_reader
 
 FORBIDDEN = HttpError("Forbidden", status_code=403, response={"error": "forbidden"})
 
@@ -80,3 +80,18 @@ def test_module_seeds_page_through_the_module_and_stop_past_the_cap(spy: Any) ->
     assert seeds[:3] == [Ref("wi-0", "p1"), Ref("wi-1", "p1"), Ref("wi-2", "p1")]
     assert len(seeds) == 5
     assert [c.method for c in spy.recorder.calls].count("modules.list_work_items") == 2
+
+
+def test_the_relations_reader_answers_none_for_a_forbidden_item() -> None:
+    def fetch(ref: Ref) -> dict[str, list[Any]]:
+        raise HttpError("Forbidden", status_code=403, response={})
+
+    assert relations_reader(fetch)(Ref("wi-1", "p1")) is None
+
+
+def test_the_relations_reader_lets_other_failures_through() -> None:
+    def fetch(ref: Ref) -> dict[str, list[Any]]:
+        raise HttpError("Boom", status_code=500, response={})
+
+    with pytest.raises(HttpError):
+        relations_reader(fetch)(Ref("wi-1", "p1"))
