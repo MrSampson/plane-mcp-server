@@ -17,6 +17,8 @@ from plane_mcp.toolkit.graph import Edge, Ordering, mermaid, order
 from plane_mcp.toolkit.graph_walk import Buckets, Ref, Walk, walk
 
 FORBIDDEN: int = 403
+# State groups that no longer hold anything up: a blocker in one of them is satisfied.
+SETTLED_GROUPS: frozenset[str] = frozenset({"completed", "cancelled"})
 MODULE_PAGE_SIZE: int = 100
 
 # Whether a project's identifier can be read; None when the caller may not read it.
@@ -40,9 +42,18 @@ def assemble_graph(
     to the raw id for an item that could not be read (its sequence number is
     unknown). `module_ids` is set only for the seeds of a module walk: no payload
     Plane serves says which module a neighbour belongs to.
+
+    An item in a completed or cancelled state group is `settled`: it blocks
+    nothing and is left out of the ordering, so what remains answers "what can be
+    started now".
     """
     found: Walk = walk(seeds, read_relations, read_node, depth, max_items)
-    ordering: Ordering = order(found.refs, found.edges, found.unexpanded)
+    settled: set[str] = {
+        item_id for item_id, detail in found.details.items() if detail.get("state_group") in SETTLED_GROUPS
+    }
+    ordering: Ordering = order(
+        [item_id for item_id in found.refs if item_id not in settled], found.edges, found.unexpanded
+    )
 
     names: dict[str, str] = {item_id: _identifier(item_id, found, project_identifier) for item_id in found.refs}
     seed_ids: set[str] = {seed.id for seed in seeds}
@@ -54,6 +65,7 @@ def assemble_graph(
             "identifier": names[item_id],
             "name": detail.get("name"),
             "state": detail.get("state"),
+            "settled": item_id in settled,
             "priority": detail.get("priority"),
             "project_id": project_id,
             "project": project_identifier(project_id),
@@ -93,7 +105,7 @@ def _forbidden(exc: HttpError) -> bool:
 
 
 def node_reader(client: Any, workspace_slug: str) -> Callable[[Ref], dict[str, Any] | None]:
-    """Reads an item's name, state, priority and sequence number; None when forbidden.
+    """Reads an item's name, state and its group, priority and sequence number; None when forbidden.
 
     The state is requested expanded because a listing carries only its id. Any
     other failure -- a 404 for an id that does not exist, say -- propagates:
@@ -116,6 +128,7 @@ def node_reader(client: Any, workspace_slug: str) -> Callable[[Ref], dict[str, A
         return {
             "name": getattr(item, "name", None),
             "state": getattr(state, "name", state),
+            "state_group": getattr(state, "group", None),
             "priority": getattr(item, "priority", None),
             "sequence_id": getattr(item, "sequence_id", None),
             "project_id": ref.project_id,

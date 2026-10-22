@@ -23,8 +23,14 @@ def _detail(sequence_id: int, project: str = "p1") -> dict[str, Any]:
 class World:
     """Items keyed by id: sequence number, project and relations."""
 
-    def __init__(self, items: dict[str, tuple[int, str, Buckets]], forbidden: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        items: dict[str, tuple[int, str, Buckets]],
+        forbidden: set[str] | None = None,
+        groups: dict[str, str] | None = None,
+    ) -> None:
         self.items: dict[str, tuple[int, str, Buckets]] = items
+        self.groups: dict[str, str] = groups or {}
         self.forbidden: set[str] = forbidden or set()
 
     def relations(self, ref: Ref) -> Buckets | None:
@@ -34,7 +40,10 @@ class World:
         if ref.id in self.forbidden:
             return None
         sequence_id, project, _ = self.items[ref.id]
-        return _detail(sequence_id, project)
+        detail: dict[str, Any] = _detail(sequence_id, project)
+        if ref.id in self.groups:
+            detail["state_group"] = self.groups[ref.id]
+        return detail
 
 
 PROJECTS: dict[str, str] = {"p1": "PROJ", "p2": "OTHER"}
@@ -75,6 +84,7 @@ def test_nodes_carry_what_a_reader_needs_to_place_them() -> None:
         "identifier": "PROJ-1",
         "name": "item 1",
         "state": "In Progress",
+        "settled": False,
         "priority": "high",
         "project_id": "p1",
         "project": "PROJ",
@@ -165,3 +175,34 @@ def test_a_module_seed_marks_its_items_as_members() -> None:
 
     members: dict[str, Any] = {n["id"]: n.get("module_ids") for n in result["nodes"]}
     assert members == {"a": ["m1"], "b": None, "c": None}
+
+
+def test_a_completed_blocker_is_settled_and_no_longer_holds_its_dependent() -> None:
+    world: World = _chain()
+    world.groups = {"a": "completed"}
+
+    result: dict[str, Any] = _graph(world, [Ref("a", "p1")], depth=2)
+
+    assert result["order"] == [["PROJ-2"], ["PROJ-3"]]
+    settled: list[str] = [n["identifier"] for n in result["nodes"] if n["settled"]]
+    assert settled == ["PROJ-1"]
+    assert {"from": "PROJ-1", "to": "PROJ-2", "type": "blocking"} in result["edges"]
+
+
+def test_a_cancelled_blocker_is_settled_too() -> None:
+    world: World = _chain()
+    world.groups = {"a": "cancelled", "b": "started"}
+
+    result: dict[str, Any] = _graph(world, [Ref("a", "p1")], depth=2)
+
+    assert result["order"] == [["PROJ-2"], ["PROJ-3"]]
+
+
+def test_a_settled_item_at_the_boundary_does_not_make_its_dependents_unordered() -> None:
+    world: World = _chain()
+    world.groups = {"a": "completed"}
+
+    result: dict[str, Any] = _graph(world, [Ref("b", "p1")], depth=0)
+
+    assert result["unordered"] == {"PROJ-3": "unexpanded"}
+    assert result["order"] == [["PROJ-2"]]

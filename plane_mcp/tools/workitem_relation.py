@@ -143,7 +143,7 @@ ACTIONS = (
         ("project_id",),
         ("workitem_id", "module_id", "depth", "max_items", "format"),
         note="the shape the relations make across projects and modules: nodes, edges, order (waves; the "
-        "first is startable now), cycles, and unordered (items that cannot be placed, with the reason); "
+        "first is startable now; completed and cancelled items are marked settled and left out), cycles, and unordered (items that cannot be placed, with the reason); "
         "pass exactly one of workitem_id or module_id as the seed; depth is how many hops beyond the "
         "seed are read (default 1; 0 reads the seed only); max_items caps items read (default 50) and "
         "truncated says when it cut the graph; format=mermaid adds a diagram; custom relations are not "

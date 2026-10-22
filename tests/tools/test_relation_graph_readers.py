@@ -28,6 +28,7 @@ def test_the_node_reader_asks_for_the_state_expanded_and_flattens_the_answer(spy
     assert detail == {
         "name": "Do it",
         "state": "Done",
+        "state_group": "completed",
         "priority": "high",
         "sequence_id": 7,
         "project_id": "p1",
