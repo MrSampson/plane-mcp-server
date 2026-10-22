@@ -178,3 +178,32 @@ def test_several_seeds_are_all_walked() -> None:
 
     assert set(result.refs) == {"a", "b", "c"}
     assert len(result.edges) == 2
+
+
+def test_an_item_readable_but_with_forbidden_relations_is_unreadable_and_unexpanded() -> None:
+    plane: FakePlane = FakePlane({})
+    plane.read_node = lambda ref: {"name": "x", "project_id": ref.project_id}  # type: ignore[method-assign]
+    plane.read_relations = lambda ref: None  # type: ignore[method-assign]
+
+    result: Walk = _run(plane, [Ref("a", "p1")])
+
+    assert result.unreadable == {"a"}
+    assert result.unexpanded == {"a"}
+    assert "a" in result.details
+
+
+def test_a_seed_listed_twice_is_read_once() -> None:
+    plane: FakePlane = FakePlane({})
+
+    _run(plane, [Ref("a", "p1"), Ref("a", "p1")])
+
+    assert plane.node_reads == ["a"]
+
+
+def test_the_boundary_and_the_cap_together_leave_cut_items_unexpanded() -> None:
+    plane: FakePlane = FakePlane({"a": {"blocking": [{"id": "b"}, {"id": "c"}]}, "b": _blocks("d")})
+
+    result: Walk = _run(plane, [Ref("a", "p1")], depth=0, max_items=2)
+
+    assert result.cut == ["c"]
+    assert result.unexpanded == {"b", "c"}

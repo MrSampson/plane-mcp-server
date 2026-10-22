@@ -95,3 +95,10 @@ def test_the_relations_reader_lets_other_failures_through() -> None:
 
     with pytest.raises(HttpError):
         relations_reader(fetch)(Ref("wi-1", "p1"))
+
+
+def test_a_project_lookup_failure_that_is_not_forbidden_propagates(spy: Any) -> None:
+    spy.returns["projects.retrieve"] = HttpError("Boom", status_code=500, response={})
+
+    with pytest.raises(HttpError):
+        project_identifier_reader(spy, "acme")("p1")

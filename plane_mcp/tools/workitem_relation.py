@@ -65,6 +65,8 @@ RELATION_TYPES: tuple[str, ...] = (*DEPENDENCY_TYPES, *PLAIN_TYPES)
 # every item read costs a relations call plus a retrieve.
 GRAPH_DEFAULT_DEPTH: int = 1
 GRAPH_DEFAULT_MAX_ITEMS: int = 50
+# Past this the call costs minutes of reads and a diagram nobody can read.
+GRAPH_MAX_ITEMS_CEILING: int = 150
 
 
 class GraphFormat(StrEnum):
@@ -158,9 +160,10 @@ ACTIONS = (
         "unreadable one may not be read by this token; "
         "pass exactly one of workitem_id or module_id as the seed; depth is how many hops beyond the "
         "seed are read (default 1; 0 expands the seed only: its neighbours are shown as boundary nodes); "
-        "max_items caps items read (default 50), and "
+        "max_items caps items read (default 50, at most 150), and "
         "truncated with cut says what the cap left unread; format=mermaid adds a diagram; custom "
-        "relations are not included",
+        "relations are not included; relates_to and duplicate edges appear only where the instance serves the "
+        "unified relations endpoint, not on the dependency route",
         read=True,
     ),
     Action("list_definitions", optional=("is_default", "is_active"), read=True),
@@ -298,6 +301,8 @@ def _graph(
         return "Error: depth must be 0 or more."
     if max_items < 0:
         return "Error: max_items must not be negative."
+    if max_items > GRAPH_MAX_ITEMS_CEILING:
+        return f"Error: max_items must be at most {GRAPH_MAX_ITEMS_CEILING}; narrow the seed or lower depth."
 
     limit: int = max_items or GRAPH_DEFAULT_MAX_ITEMS
     seeds: list[Ref] = (
