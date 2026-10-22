@@ -40,6 +40,14 @@ from plane_mcp.toolkit import (
     or_fallback,
     route_absent,
 )
+from plane_mcp.toolkit.graph_walk import Buckets, Ref
+from plane_mcp.toolkit.relation_graph import (
+    assemble_graph,
+    module_seeds,
+    node_reader,
+    project_identifier_reader,
+    relations_reader,
+)
 
 NAME = "workitem_relation"
 TITLE = "Work item relations"
@@ -51,6 +59,12 @@ DEPENDENCY_TYPES: tuple[str, ...] = get_args(DependencyTypeEnum)
 # SDK adds later may be directional and need a decision, which the test below forces.
 PLAIN_TYPES: tuple[str, ...] = ("relates_to", "duplicate")
 RELATION_TYPES: tuple[str, ...] = (*DEPENDENCY_TYPES, *PLAIN_TYPES)
+
+# `graph` bounds: one hop beyond the seed keeps "what blocks this" to a handful of reads, and
+# every item read costs a relations call plus a retrieve.
+GRAPH_DEFAULT_DEPTH: int = 1
+GRAPH_DEFAULT_MAX_ITEMS: int = 50
+GRAPH_FORMATS: tuple[str, ...] = ("mermaid",)
 
 _OTHER_RELATIONS = (
     "For any other relationship pass relation_definition_id and "
@@ -123,6 +137,18 @@ ACTIONS = (
         "instance with no custom-relation surface, where either value succeeds; removing a "
         "relates_to or duplicate relation has not been verified on any instance",
         destructive=True,
+    ),
+    Action(
+        "graph",
+        ("project_id",),
+        ("workitem_id", "module_id", "depth", "max_items", "format"),
+        note="the shape the relations make across projects and modules: nodes, edges, order (waves; the "
+        "first is startable now), cycles, and unordered (items that cannot be placed, with the reason); "
+        "pass exactly one of workitem_id or module_id as the seed; depth is how many hops beyond the "
+        "seed are read (default 1; 0 reads the seed only); max_items caps items read (default 50) and "
+        "truncated says when it cut the graph; format=mermaid adds a diagram; custom relations are not "
+        "included",
+        read=True,
     ),
     Action("list_definitions", optional=("is_default", "is_active"), read=True),
     Action("create_definition", ("name",), ("outward", "inward", "is_active", "color")),
@@ -207,6 +233,72 @@ def _all_definitions(client, workspace_slug: str, is_default, is_active) -> list
             return results
 
 
+def _graph_relations(client: Any, workspace_slug: str) -> Callable[[Ref], Buckets | None]:
+    """Reads each item's relation buckets, asking the dependency route only until it proves absent.
+
+    On an instance without that route every call would 404 before the fallback served it, so
+    after the first the unified endpoint is used directly.
+    """
+    dependencies_absent: bool = False
+
+    def fetch(ref: Ref) -> dict[str, list[Any]]:
+        nonlocal dependencies_absent
+        if not dependencies_absent:
+            try:
+                raw: dict[str, list[Any]] = client.work_items.dependencies.list(
+                    workspace_slug=workspace_slug, project_id=ref.project_id, work_item_id=ref.id
+                ).model_dump()
+                return {bucket: [_related_item(entry) for entry in entries or []] for bucket, entries in raw.items()}
+            except HttpError as exc:
+                if not route_absent(exc):
+                    raise
+                dependencies_absent = True
+        return _unified_relations(client, workspace_slug, ref.project_id, ref.id)
+
+    return relations_reader(fetch)
+
+
+def _graph(
+    client: Any,
+    workspace_slug: str,
+    project_id: str,
+    workitem_id: str,
+    module_id: str,
+    depth: int | None,
+    max_items: int,
+    format: str,
+) -> Any:
+    if error := needs("graph", project_id=project_id):
+        return error
+    if workitem_id and module_id:
+        return "Error: graph takes only one of workitem_id or module_id, not both."
+    if not workitem_id and not module_id:
+        return "Error: graph needs a seed: pass workitem_id or module_id."
+    if error := one_of("format", format, GRAPH_FORMATS):
+        return error
+    if depth is not None and depth < 0:
+        return "Error: depth must be 0 or more."
+    if max_items < 0:
+        return "Error: max_items must not be negative."
+
+    limit: int = max_items or GRAPH_DEFAULT_MAX_ITEMS
+    seeds: list[Ref] = (
+        [Ref(workitem_id, project_id)]
+        if workitem_id
+        else module_seeds(client, workspace_slug, project_id, module_id, limit)
+    )
+    return assemble_graph(
+        seeds,
+        _graph_relations(client, workspace_slug),
+        node_reader(client, workspace_slug),
+        project_identifier_reader(client, workspace_slug),
+        depth=GRAPH_DEFAULT_DEPTH if depth is None else depth,
+        max_items=limit,
+        module_id=module_id,
+        diagram=format == "mermaid",
+    )
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name=NAME,
@@ -220,6 +312,7 @@ def register(mcp: FastMCP) -> None:
             "list",
             "create",
             "delete",
+            "graph",
             "list_definitions",
             "create_definition",
             "update_definition",
@@ -227,6 +320,7 @@ def register(mcp: FastMCP) -> None:
         ],
         project_id: str = "",
         workitem_id: str = "",
+        module_id: str = "",
         workitem_ids: list[str] | None = None,
         related_workitem_id: str = "",
         relation_type: str = "",
@@ -241,8 +335,16 @@ def register(mcp: FastMCP) -> None:
         is_default: bool | None = None,
         is_active: bool | None = None,
         is_dependency: bool = False,
+        # Sentinels, not real defaults: the argument check ignores a falsy value, and 0 is a
+        # real depth, so None means "use the default".
+        depth: int | None = None,
+        max_items: int = 0,
+        format: str = "",
     ) -> Any:
         client, workspace_slug = get_plane_client_context()
+
+        if action == "graph":
+            return _graph(client, workspace_slug, project_id, workitem_id, module_id, depth, max_items, format)
 
         if action == "list_definitions":
             built_ins: dict[str, list[str]] = {
