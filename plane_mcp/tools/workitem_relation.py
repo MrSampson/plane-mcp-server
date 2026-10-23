@@ -41,9 +41,11 @@ from plane_mcp.toolkit import (
     or_fallback,
     route_absent,
 )
+from plane_mcp.toolkit.graph_html import item_link, render_html
 from plane_mcp.toolkit.graph_walk import Buckets, Ref
 from plane_mcp.toolkit.relation_graph import (
     assemble_graph,
+    graph_title,
     module_seeds,
     node_reader,
     project_identifier_reader,
@@ -73,6 +75,7 @@ class GraphFormat(StrEnum):
     """Extra renderings `graph` can add to its data."""
 
     MERMAID = "mermaid"
+    HTML = "html"
 
 
 GRAPH_FORMATS: tuple[str, ...] = tuple(GraphFormat)
@@ -161,7 +164,8 @@ ACTIONS = (
         "pass exactly one of workitem_id or module_id as the seed; depth is how many hops beyond the "
         "seed are read (default 1; 0 expands the seed only: its neighbours are shown as boundary nodes); "
         "max_items caps items read (default 50, at most 150), and "
-        "truncated with cut says what the cap left unread; format=mermaid adds a diagram; custom "
+        "truncated with cut says what the cap left unread; format=mermaid adds a diagram; format=html adds a "
+        "self-contained page under html (a column per wave, grouped by project, items linked to Plane); custom "
         "relations are not included; relates_to and duplicate edges appear only where the instance serves the "
         "unified relations endpoint, not on the dependency route",
         read=True,
@@ -310,7 +314,7 @@ def _graph(
         if workitem_id
         else module_seeds(client, workspace_slug, project_id, module_id, limit)
     )
-    return assemble_graph(
+    result: dict[str, Any] = assemble_graph(
         seeds,
         _graph_relations(client, workspace_slug),
         node_reader(client, workspace_slug),
@@ -320,6 +324,10 @@ def _graph(
         module_id=module_id,
         diagram=format == GraphFormat.MERMAID,
     )
+    if format == GraphFormat.HTML:
+        title: str = graph_title(client, workspace_slug, project_id, module_id, workitem_id, result)
+        result["html"] = render_html(result, item_link(workspace_slug), title)
+    return result
 
 
 def register(mcp: FastMCP) -> None:

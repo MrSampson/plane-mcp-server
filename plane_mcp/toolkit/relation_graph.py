@@ -194,3 +194,25 @@ def module_seeds(client: Any, workspace_slug: str, project_id: str, module_id: s
             break
         cursor = page.next_cursor
     return seeds[: limit + 1]
+
+
+def graph_title(
+    client: Any, workspace_slug: str, project_id: str, module_id: str, workitem_id: str, result: dict[str, Any]
+) -> str:
+    """What the graph is of: `Project / Module` for a module seed, else the seed item.
+
+    A name the caller may not read falls back to its id, so a title never fails the graph.
+    """
+    try:
+        project: str = client.projects.retrieve(workspace_slug=workspace_slug, project_id=project_id).name
+        if not module_id:
+            seed: dict[str, Any] = next(n for n in result["nodes"] if n["id"] == workitem_id)
+            return f"{project} / {seed['identifier']} {seed['name'] or ''}".strip()
+        module: str = client.modules.retrieve(
+            workspace_slug=workspace_slug, project_id=project_id, module_id=module_id
+        ).name
+    except HttpError as exc:
+        if not _forbidden(exc):
+            raise
+        return module_id or project_id
+    return f"{project} / {module}"
