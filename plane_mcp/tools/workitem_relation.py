@@ -13,6 +13,7 @@ from enum import StrEnum
 from typing import Any, Literal, get_args
 
 from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_request
 from plane.errors.errors import HttpError
 from plane.models.work_item_relation_definitions import (
     CreateWorkItemRelationDefinition,
@@ -41,7 +42,7 @@ from plane_mcp.toolkit import (
     or_fallback,
     route_absent,
 )
-from plane_mcp.toolkit.graph_html import item_link, render_html
+from plane_mcp.toolkit.graph_html import item_link, render_html, save_page
 from plane_mcp.toolkit.graph_walk import Buckets, Ref
 from plane_mcp.toolkit.relation_graph import (
     assemble_graph,
@@ -76,6 +77,7 @@ class GraphFormat(StrEnum):
 
     MERMAID = "mermaid"
     HTML = "html"
+    HTML_FILE = "html_file"
 
 
 GRAPH_FORMATS: tuple[str, ...] = tuple(GraphFormat)
@@ -165,7 +167,8 @@ ACTIONS = (
         "seed are read (default 1; 0 expands the seed only: its neighbours are shown as boundary nodes); "
         "max_items caps items read (default 50, at most 150), and "
         "truncated with cut says what the cap left unread; format=mermaid adds a diagram; format=html adds a "
-        "self-contained page under html (a column per wave, grouped by project, items linked to Plane); custom "
+        "self-contained page under html (a column per wave, grouped by project, items linked to Plane); "
+        "format=html_file writes that page to a temp file and returns its path under path (stdio only); custom "
         "relations are not included; relates_to and duplicate edges appear only where the instance serves the "
         "unified relations endpoint, not on the dependency route",
         read=True,
@@ -283,6 +286,15 @@ def _graph_relations(client: Any, workspace_slug: str) -> Callable[[Ref], Bucket
     return relations_reader(fetch)
 
 
+def _over_http() -> bool:
+    """Whether the call arrived over HTTP, where the server's disk is not the caller's."""
+    try:
+        get_http_request()
+    except RuntimeError:
+        return False
+    return True
+
+
 def _graph(
     client: Any,
     workspace_slug: str,
@@ -301,6 +313,8 @@ def _graph(
         return "Error: graph needs a seed: pass workitem_id or module_id."
     if error := one_of("format", format, GRAPH_FORMATS):
         return error
+    if format == GraphFormat.HTML_FILE and _over_http():
+        return "Error: format=html_file writes on the server's machine, so it needs stdio; use format=html."
     if depth is not None and depth < 0:
         return "Error: depth must be 0 or more."
     if max_items < 0:
@@ -324,9 +338,13 @@ def _graph(
         module_id=module_id,
         diagram=format == GraphFormat.MERMAID,
     )
-    if format == GraphFormat.HTML:
+    if format in (GraphFormat.HTML, GraphFormat.HTML_FILE):
         title: str = graph_title(client, workspace_slug, project_id, module_id, workitem_id, result)
-        result["html"] = render_html(result, item_link(workspace_slug), title)
+        page: str = render_html(result, item_link(workspace_slug), title)
+        if format == GraphFormat.HTML_FILE:
+            result["path"] = save_page(page)
+        else:
+            result["html"] = page
     return result
 
 

@@ -10,6 +10,7 @@ never on a 404 that means "this particular id does not exist".
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, get_args
 
@@ -683,6 +684,28 @@ def test_graph_titles_a_page_with_ids_when_the_names_are_forbidden(registered: d
     result = _graph(registered, spy, workitem_id="", module_id="mod-1", format="html")
 
     assert "<h1>mod-1</h1>" in result["html"]
+
+
+def test_graph_html_file_returns_a_path_and_not_the_page(registered: dict[str, Any], spy: Any) -> None:
+    result = _graph(registered, spy, format="html_file")
+
+    path: Path = Path(result["path"])
+    try:
+        assert "<h1>Platform / PROJ-5 x</h1>" in path.read_text(encoding="utf-8")
+        assert "html" not in result
+    finally:
+        path.unlink()
+
+
+def test_graph_html_file_is_refused_over_http(
+    registered: dict[str, Any], spy: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("plane_mcp.tools.workitem_relation.get_http_request", lambda: object())
+
+    result = _graph(registered, spy, format="html_file")
+
+    assert isinstance(result, str) and "needs stdio" in result
+    assert "work_items.relations._get" not in spy.recorder.methods
 
 
 def test_graph_takes_a_module_as_its_seed(registered: dict[str, Any], spy: Any) -> None:

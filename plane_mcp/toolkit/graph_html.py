@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import os
+import tempfile
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
@@ -20,6 +21,7 @@ ItemLink = Callable[[dict[str, Any]], str | None]
 
 LINK_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 UNKNOWN_PROJECT: str = "?"
+PAGE_PREFIX: str = "plane-graph-"
 CLOUD_API_URL: str = "https://api.plane.so"
 CLOUD_APP_URL: str = "https://app.plane.so"
 
@@ -194,3 +196,14 @@ def render_html(result: dict[str, Any], link: ItemLink, title: str) -> str:
         f'<svg id="svg"></svg><div id="cols">{"".join(body)}</div></div>'
         f"<script>{_SCRIPT}</script></body></html>"
     )
+
+
+def save_page(page: str) -> str:
+    """Writes the page to a new file in the temp directory and returns its path.
+
+    `mkstemp` creates it readable by the owner only: the page holds item names.
+    """
+    descriptor, path = tempfile.mkstemp(prefix=PAGE_PREFIX, suffix=".html")
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(page)
+    return path

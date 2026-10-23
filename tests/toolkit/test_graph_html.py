@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
+import stat
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from plane_mcp.toolkit.graph_html import item_link, render_html
+from plane_mcp.toolkit.graph_html import item_link, render_html, save_page
 
 
 def _node(identifier: str, project: str = "PROJ", **overrides: Any) -> dict[str, Any]:
@@ -145,3 +148,13 @@ def test_no_base_url_means_no_links(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PLANE_BASE_URL", raising=False)
 
     assert item_link("ws")(_node("PROJ-1")) is None
+
+
+def test_a_saved_page_is_read_back_and_private() -> None:
+    path: str = save_page("<p>hello</p>")
+    try:
+        assert Path(path).read_text(encoding="utf-8") == "<p>hello</p>"
+        assert Path(path).name.startswith("plane-graph-") and path.endswith(".html")
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    finally:
+        os.unlink(path)
