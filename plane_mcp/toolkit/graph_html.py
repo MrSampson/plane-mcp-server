@@ -48,6 +48,7 @@ h4{margin:10px 0 4px;color:var(--mut);font-size:11px;text-transform:uppercase;le
 .card.dim,.card.dim .st{color:var(--faint)}.card.dim{border-color:var(--faint)}
 svg{position:absolute;top:0;left:0;pointer-events:none;z-index:0;overflow:visible}
 path{fill:none;stroke:var(--line);stroke-width:1.2}path.plain{stroke-dasharray:4 3}
+path.order{marker-end:url(#arrow)}path.order.hot{marker-end:url(#arrow-hot)}
 path.hot{stroke:var(--seed);stroke-width:2}
 #arrow polygon{fill:var(--line)}#arrow-hot polygon{fill:var(--seed)}
 .legend{color:var(--mut);margin:0 0 12px}
@@ -64,9 +65,6 @@ function anchor(ra,rb){
  if(rb.right<=ra.left)return{x1:ra.left,y1:mid(ra),x2:rb.right,y2:mid(rb),bend:(ra.left+rb.right)/2};
  return{x1:ra.right,y1:mid(ra),x2:rb.right,y2:mid(rb),bend:Math.max(ra.right,rb.right)+SIDE_BEND};
 }
-function mark(p,hot){
- if(p.dataset.k==='order')p.setAttribute('marker-end','url(#'+(hot?'arrow-hot':'arrow')+')');
-}
 function draw(){
  edges.replaceChildren();
  const o=wrap.getBoundingClientRect(),dx=wrap.scrollLeft-o.left,dy=wrap.scrollTop-o.top;
@@ -78,8 +76,8 @@ function draw(){
   const p=document.createElementNS('http://www.w3.org/2000/svg','path');
   const x1=g.x1+dx,y1=g.y1+dy,x2=g.x2+dx,y2=g.y2+dy,bend=g.bend+dx;
   p.setAttribute('d','M'+x1+' '+y1+' C'+bend+' '+y1+' '+bend+' '+y2+' '+x2+' '+y2);
-  if(kind==='plain')p.classList.add('plain');
-  p.dataset.f=src;p.dataset.t=c.dataset.key;p.dataset.k=kind;mark(p,false);edges.appendChild(p);
+  p.classList.add(kind);
+  p.dataset.f=src;p.dataset.t=c.dataset.key;edges.appendChild(p);
  }
 }
 cards.forEach(c=>{
@@ -87,13 +85,13 @@ cards.forEach(c=>{
   const keep=new Set([c.dataset.key]);
   edges.querySelectorAll('path').forEach(p=>{
    const hot=p.dataset.t===c.dataset.key||p.dataset.f===c.dataset.key;
-   p.classList.toggle('hot',hot);mark(p,hot);
+   p.classList.toggle('hot',hot);
    if(hot){keep.add(p.dataset.f);keep.add(p.dataset.t);}
   });
   cards.forEach(x=>x.classList.toggle('dim',!keep.has(x.dataset.key)));
  };
  c.onmouseleave=()=>{
-  edges.querySelectorAll('path').forEach(p=>{p.classList.remove('hot');mark(p,false);});
+  edges.querySelectorAll('path').forEach(p=>{p.classList.remove('hot');});
   cards.forEach(x=>x.classList.remove('dim'));
  };
 });
@@ -104,7 +102,7 @@ _MARKERS: str = (
     "<defs>"
     + "".join(
         f'<marker id="{name}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" '
-        f'markerUnits="userSpaceOnUse"><polygon points="0,0 8,4 0,8"/></marker>'
+        'markerUnits="userSpaceOnUse"><polygon points="0,0 8,4 0,8"/></marker>'
         for name in ("arrow", "arrow-hot")
     )
     + "</defs>"

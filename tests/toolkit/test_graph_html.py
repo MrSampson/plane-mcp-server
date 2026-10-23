@@ -279,5 +279,13 @@ def test_a_dependency_edge_ends_in_an_arrowhead_and_a_plain_relation_does_not() 
     page: str = render_html(_result(), _none, "t")
 
     assert 'id="arrow"' in page and 'id="arrow-hot"' in page
-    assert "if(p.dataset.k==='order')p.setAttribute('marker-end'" in page
+    assert "path.order{marker-end:url(#arrow)}path.order.hot{marker-end:url(#arrow-hot)}" in page
+    assert "marker-end" not in page.split("path.plain{")[1].split("\n")[0]
     assert "An arrow points at the item that waits" in page
+
+
+def test_a_redraw_keeps_the_arrowheads_because_it_clears_only_the_edges() -> None:
+    page: str = render_html(_result(), _none, "t")
+
+    assert page.index("<defs>") < page.index('<g id="edges">')
+    assert "edges.replaceChildren()" in _SCRIPT and "svg.replaceChildren" not in _SCRIPT
