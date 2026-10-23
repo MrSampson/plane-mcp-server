@@ -40,7 +40,7 @@ h1{margin:0 0 4px;font-size:18px}
 h3{margin:0 0 8px}h3 small{display:block;font-weight:400;color:var(--mut);font-size:11px}
 h4{margin:10px 0 4px;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
 .card{border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:6px;background:var(--bg)}
-.card.seed{border:2px solid var(--seed)}.card.boundary{border-style:dashed;border-color:var(--dash)}
+.card.member{border:2px solid var(--seed)}.card.boundary{border-style:dashed;border-color:var(--dash)}
 .card.cycle{border-color:var(--bad)}.card.settled{opacity:.55}
 .card a{color:inherit;font-weight:600}.st{color:var(--mut);font-size:11px}.nm{margin-top:2px}
 .card.dim{opacity:.25}.card.hot{outline:2px solid var(--seed)}
@@ -89,7 +89,7 @@ draw();addEventListener('resize',draw);
 """
 
 _LEGEND: str = (
-    "Blue border: a member of the module. Dashed border: relations not read. Faded: settled. "
+    "Blue border: a module member. Dashed border: relations not read. Faded: settled. "
     "Dashed line: relates_to or duplicate. Hover an item to trace its blockers and dependents."
 )
 
@@ -126,7 +126,7 @@ def _columns(result: dict[str, Any]) -> list[tuple[str, str, list[str]]]:
 def _card(key: str, node: dict[str, Any], incoming: str, cyclic: bool, link: ItemLink) -> str:
     classes: list[str] = ["card"]
     if node.get("module_ids"):
-        classes.append("seed")
+        classes.append("member")
     if node["settled"]:
         classes.append("settled")
     if node["boundary"]:
@@ -148,18 +148,16 @@ def _card(key: str, node: dict[str, Any], incoming: str, cyclic: bool, link: Ite
 
 
 def item_link(workspace_slug: str) -> ItemLink:
-    """Addresses an item's page in the web app, or nothing when no public base URL is configured.
+    """Addresses an item's page in the web app.
 
     Only `PLANE_BASE_URL` is used: `PLANE_INTERNAL_BASE_URL` is reachable from the server, not
     necessarily from the reader's browser. Plane Cloud serves its API from `api.` and the app from `app.`.
     """
-    base: str = os.getenv("PLANE_BASE_URL", "").rstrip("/")
+    base: str = (os.getenv("PLANE_BASE_URL") or CLOUD_API_URL).rstrip("/")
     if base == CLOUD_API_URL:
         base = CLOUD_APP_URL
 
     def link(node: dict[str, Any]) -> str | None:
-        if not base:
-            return None
         project: str = quote(str(node["project_id"]), safe="")
         return f"{base}/{quote(workspace_slug, safe='')}/projects/{project}/issues/{quote(str(node['id']), safe='')}"
 

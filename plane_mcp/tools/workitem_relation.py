@@ -295,16 +295,10 @@ def _over_http() -> bool:
     return True
 
 
-def _graph(
-    client: Any,
-    workspace_slug: str,
-    project_id: str,
-    workitem_id: str,
-    module_id: str,
-    depth: int | None,
-    max_items: int,
-    format: str,
-) -> Any:
+def _graph_error(
+    project_id: str, workitem_id: str, module_id: str, depth: int | None, max_items: int, format: str
+) -> str | None:
+    """Why the call cannot be answered, checked before anything is read."""
     if error := needs("graph", project_id=project_id):
         return error
     if workitem_id and module_id:
@@ -321,6 +315,41 @@ def _graph(
         return "Error: max_items must not be negative."
     if max_items > GRAPH_MAX_ITEMS_CEILING:
         return f"Error: max_items must be at most {GRAPH_MAX_ITEMS_CEILING}; narrow the seed or lower depth."
+    return None
+
+
+def _attach_page(
+    result: dict[str, Any],
+    client: Any,
+    workspace_slug: str,
+    project_id: str,
+    module_id: str,
+    workitem_id: str,
+    to_file: bool,
+) -> None:
+    """Adds the HTML page to `result`: inline under `html`, or saved with its path under `path`."""
+    title: str = graph_title(
+        client, workspace_slug, project_id, module_id=module_id, workitem_id=workitem_id, result=result
+    )
+    page: str = render_html(result, item_link(workspace_slug), title)
+    if to_file:
+        result["path"] = save_page(page)
+    else:
+        result["html"] = page
+
+
+def _graph(
+    client: Any,
+    workspace_slug: str,
+    project_id: str,
+    workitem_id: str,
+    module_id: str,
+    depth: int | None,
+    max_items: int,
+    format: str,
+) -> Any:
+    if error := _graph_error(project_id, workitem_id, module_id, depth, max_items, format):
+        return error
 
     limit: int = max_items or GRAPH_DEFAULT_MAX_ITEMS
     seeds: list[Ref] = (
@@ -339,12 +368,9 @@ def _graph(
         diagram=format == GraphFormat.MERMAID,
     )
     if format in (GraphFormat.HTML, GraphFormat.HTML_FILE):
-        title: str = graph_title(client, workspace_slug, project_id, module_id, workitem_id, result)
-        page: str = render_html(result, item_link(workspace_slug), title)
-        if format == GraphFormat.HTML_FILE:
-            result["path"] = save_page(page)
-        else:
-            result["html"] = page
+        _attach_page(
+            result, client, workspace_slug, project_id, module_id, workitem_id, format == GraphFormat.HTML_FILE
+        )
     return result
 
 

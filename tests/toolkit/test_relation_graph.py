@@ -231,7 +231,7 @@ def _missing() -> HttpError:
 
 def _titled(client: _Client, module_id: str = "", workitem_id: str = "a") -> str:
     result: dict[str, Any] = _graph(_chain(), [Ref("a", "p1")], depth=0)
-    return graph_title(client, "ws", "p1", module_id, workitem_id, result)
+    return graph_title(client, "ws", "p1", module_id=module_id, workitem_id=workitem_id, result=result)
 
 
 def test_a_work_item_title_names_the_project_and_the_seed() -> None:
@@ -248,3 +248,10 @@ def test_a_title_falls_back_to_the_module_id_when_the_module_is_unreadable() -> 
 
 def test_a_title_survives_a_seed_missing_from_the_result() -> None:
     assert _titled(_Client(SimpleNamespace(name="Platform")), workitem_id="gone") == "Platform / gone"
+
+
+def test_a_nameless_module_is_titled_by_its_id() -> None:
+    assert (
+        _titled(_Client(SimpleNamespace(name="Platform"), SimpleNamespace(name=None)), module_id="m1")
+        == "Platform / m1"
+    )

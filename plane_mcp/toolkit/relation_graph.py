@@ -197,7 +197,7 @@ def module_seeds(client: Any, workspace_slug: str, project_id: str, module_id: s
 
 
 def graph_title(
-    client: Any, workspace_slug: str, project_id: str, module_id: str, workitem_id: str, result: dict[str, Any]
+    client: Any, workspace_slug: str, project_id: str, *, module_id: str, workitem_id: str, result: dict[str, Any]
 ) -> str:
     """What the graph is of: `Project / Module` for a module seed, else `Project / PROJ-N name`.
 
@@ -213,9 +213,10 @@ def graph_title(
     if not module_id:
         return f"{project} / {seed.get('identifier', workitem_id)} {seed.get('name') or ''}".strip()
     try:
-        module: str = client.modules.retrieve(
-            workspace_slug=workspace_slug, project_id=project_id, module_id=module_id
-        ).name
+        module: str = (
+            client.modules.retrieve(workspace_slug=workspace_slug, project_id=project_id, module_id=module_id).name
+            or module_id
+        )
     except HttpError:
         module = module_id
     return f"{project} / {module}"

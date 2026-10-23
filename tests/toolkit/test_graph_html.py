@@ -63,11 +63,11 @@ def test_each_wave_is_a_column_and_items_are_grouped_by_project() -> None:
     assert "<h4>OTHER</h4>" in page and "<h4>PROJ</h4>" in page
 
 
-def test_a_module_member_is_marked_as_a_seed() -> None:
+def test_a_module_member_is_outlined() -> None:
     page: str = render_html(_result(), _none, "t")
 
-    assert 'class="card seed"' in page
-    assert page.count("card seed") == 1
+    assert 'class="card member"' in page
+    assert page.count("card member") == 1
 
 
 def test_unplaced_items_get_their_own_columns() -> None:
@@ -149,10 +149,10 @@ def test_plane_cloud_links_go_to_the_app(monkeypatch: pytest.MonkeyPatch) -> Non
     assert (item_link("ws")(_node("PROJ-1")) or "").startswith("https://app.plane.so/ws/")
 
 
-def test_no_base_url_means_no_links(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_base_url_links_to_plane_cloud(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PLANE_BASE_URL", raising=False)
 
-    assert item_link("ws")(_node("PROJ-1")) is None
+    assert item_link("ws")(_node("PROJ-1")) == "https://app.plane.so/ws/projects/pid-PROJ/issues/id-PROJ-1"
 
 
 def test_a_saved_page_is_read_back_and_private() -> None:
@@ -179,10 +179,10 @@ def test_link_path_parts_are_percent_encoded(monkeypatch: pytest.MonkeyPatch) ->
     assert link == "https://plane.example/a%20b/projects/pid-PROJ/issues/x%2F..%2Fy"
 
 
-def test_an_empty_base_url_means_no_links(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_empty_base_url_is_treated_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PLANE_BASE_URL", "")
 
-    assert item_link("ws")(_node("PROJ-1")) is None
+    assert (item_link("ws")(_node("PROJ-1")) or "").startswith("https://app.plane.so/")
 
 
 def test_an_item_with_nothing_known_about_it_still_renders() -> None:
@@ -222,3 +222,9 @@ def test_a_failed_write_leaves_no_file_behind(monkeypatch: pytest.MonkeyPatch) -
         save_page("x")
 
     assert made and not os.path.exists(made[0])
+
+
+def test_an_edge_to_an_unlisted_item_is_left_out() -> None:
+    result: dict[str, Any] = _result(edges=[{"from": "GONE-9", "to": "OTHER-2", "type": "blocking"}])
+
+    assert 'data-in=""' in render_html(result, _none, "t")
