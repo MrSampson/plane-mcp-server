@@ -12,7 +12,7 @@ import os
 import tempfile
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from plane_mcp.toolkit.graph import EdgeType, Unordered
 
@@ -22,6 +22,8 @@ ItemLink = Callable[[dict[str, Any]], str | None]
 LINK_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 UNKNOWN_PROJECT: str = "?"
 PAGE_PREFIX: str = "plane-graph-"
+# The page needs only its own inline style and script, and nothing from the network.
+CONTENT_SECURITY_POLICY: str = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
 CLOUD_API_URL: str = "https://api.plane.so"
 CLOUD_APP_URL: str = "https://app.plane.so"
 
@@ -87,7 +89,7 @@ draw();addEventListener('resize',draw);
 """
 
 _LEGEND: str = (
-    "Blue border: in the module (or the seed item). Dashed border: relations not read. Faded: settled. "
+    "Blue border: a member of the module. Dashed border: relations not read. Faded: settled. "
     "Dashed line: relates_to or duplicate. Hover an item to trace its blockers and dependents."
 )
 
@@ -109,9 +111,9 @@ def _columns(result: dict[str, Any]) -> list[tuple[str, str, list[str]]]:
         subtitle: str = "can start now" if index == 0 else f"after wave {index - 1}"
         columns.append((f"Wave {index}", subtitle, wave))
     waiting: tuple[str, ...] = (Unordered.AFTER_UNEXPANDED, Unordered.AFTER_CYCLE)
-    held: list[str] = [i for i, why in unordered.items() if why in waiting]
+    held: list[str] = [i for i, why in unordered.items() if why in waiting and i not in settled]
     unread: list[str] = [i for i, why in unordered.items() if why == Unordered.UNEXPANDED and i not in settled]
-    cyclic: list[str] = [i for i, why in unordered.items() if why == Unordered.IN_CYCLE]
+    cyclic: list[str] = [i for i, why in unordered.items() if why == Unordered.IN_CYCLE and i not in settled]
     if held:
         columns.append(("Held", "waits on an item that is unread or in a cycle", held))
     if unread:
@@ -134,7 +136,9 @@ def _card(key: str, node: dict[str, Any], incoming: str, cyclic: bool, link: Ite
     label: str = html.escape(node["identifier"])
     url: str | None = _safe_url(link(node))
     title: str = (
-        f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{label}</a>' if url else f"<b>{label}</b>"
+        f'<a href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">{label}</a>'
+        if url
+        else f"<b>{label}</b>"
     )
     state: str = html.escape(str(node["state"])) if node["state"] else ""
     return (
@@ -156,7 +160,8 @@ def item_link(workspace_slug: str) -> ItemLink:
     def link(node: dict[str, Any]) -> str | None:
         if not base:
             return None
-        return f"{base}/{workspace_slug}/projects/{node['project_id']}/issues/{node['id']}"
+        project: str = quote(str(node["project_id"]), safe="")
+        return f"{base}/{quote(workspace_slug, safe='')}/projects/{project}/issues/{quote(str(node['id']), safe='')}"
 
     return link
 
@@ -191,6 +196,7 @@ def render_html(result: dict[str, Any], link: ItemLink, title: str) -> str:
     )
     return (
         '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
+        f'<meta http-equiv="Content-Security-Policy" content="{CONTENT_SECURITY_POLICY}">'
         f'<title>{html.escape(title)}</title><style>{_STYLE}</style><body><div id="wrap">'
         f'<h1>{html.escape(title)}</h1><p class="legend">{_LEGEND}</p>{truncated}'
         f'<svg id="svg"></svg><div id="cols">{"".join(body)}</div></div>'
@@ -201,9 +207,14 @@ def render_html(result: dict[str, Any], link: ItemLink, title: str) -> str:
 def save_page(page: str) -> str:
     """Writes the page to a new file in the temp directory and returns its path.
 
-    `mkstemp` creates it readable by the owner only: the page holds item names.
+    `mkstemp` creates it readable by the owner only: the page holds item names. Files are not
+    removed afterwards; the temp directory's own clean-up handles them.
     """
     descriptor, path = tempfile.mkstemp(prefix=PAGE_PREFIX, suffix=".html")
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(page)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(page)
+    except OSError:
+        os.unlink(path)
+        raise
     return path

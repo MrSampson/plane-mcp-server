@@ -683,7 +683,7 @@ def test_graph_titles_a_page_with_ids_when_the_names_are_forbidden(registered: d
 
     result = _graph(registered, spy, workitem_id="", module_id="mod-1", format="html")
 
-    assert "<h1>mod-1</h1>" in result["html"]
+    assert "<h1>Platform / mod-1</h1>" in result["html"]
 
 
 def test_graph_html_file_returns_a_path_and_not_the_page(registered: dict[str, Any], spy: Any) -> None:
@@ -706,6 +706,14 @@ def test_graph_html_file_is_refused_over_http(
 
     assert isinstance(result, str) and "needs stdio" in result
     assert "work_items.relations._get" not in spy.recorder.methods
+
+
+def test_graph_adds_neither_page_nor_path_by_default(registered: dict[str, Any], spy: Any) -> None:
+    result: dict[str, Any] = _graph(registered, spy)
+    diagram: dict[str, Any] = _graph(registered, spy, format="mermaid")
+
+    assert "html" not in result and "path" not in result
+    assert "html" not in diagram and "path" not in diagram
 
 
 def test_graph_takes_a_module_as_its_seed(registered: dict[str, Any], spy: Any) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import stat
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -108,10 +109,14 @@ def test_names_are_escaped_and_never_reach_the_script() -> None:
     page: str = render_html(result, _none, hostile)
 
     assert hostile not in page
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;&quot;" in page
     assert page.count("<script>") == 1
 
 
-@pytest.mark.parametrize("url", ["javascript:alert(1)", "data:text/html,x", "//evil.example/x"])
+@pytest.mark.parametrize(
+    "url",
+    ["javascript:alert(1)", "JAVASCRIPT:alert(1)", " javascript:alert(1)", "data:text/html,x", "//evil.example/x"],
+)
 def test_only_http_links_are_followed(url: str) -> None:
     page: str = render_html(_result(), lambda node: url, "t")
 
@@ -158,3 +163,62 @@ def test_a_saved_page_is_read_back_and_private() -> None:
         assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     finally:
         os.unlink(path)
+
+
+def test_a_quote_in_a_link_cannot_end_the_attribute() -> None:
+    page: str = render_html(_result(), lambda node: 'https://x.example/"onmouseover="alert(1)', "t")
+
+    assert 'href="https://x.example/&quot;onmouseover=&quot;alert(1)"' in page
+
+
+def test_link_path_parts_are_percent_encoded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PLANE_BASE_URL", "https://plane.example")
+
+    link: str | None = item_link("a b")(_node("PROJ-1", id="x/../y"))
+
+    assert link == "https://plane.example/a%20b/projects/pid-PROJ/issues/x%2F..%2Fy"
+
+
+def test_an_empty_base_url_means_no_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PLANE_BASE_URL", "")
+
+    assert item_link("ws")(_node("PROJ-1")) is None
+
+
+def test_an_item_with_nothing_known_about_it_still_renders() -> None:
+    bare: dict[str, Any] = _node("x", unreadable=True, name=None, state=None, project=None, boundary=True)
+    result: dict[str, Any] = _result(nodes=[bare], edges=[], order=[], unordered={"x": "unexpanded"})
+
+    page: str = render_html(result, _none, "t")
+
+    assert "<h4>?</h4>" in page and "card boundary" in page
+
+
+def test_a_settled_item_is_drawn_once() -> None:
+    result: dict[str, Any] = _result(
+        nodes=[_node("PROJ-1", settled=True)], edges=[], order=[], unordered={"PROJ-1": "after_unexpanded"}
+    )
+
+    assert render_html(result, _none, "t").count('data-key="n0"') == 1
+
+
+def test_a_failed_write_leaves_no_file_behind(monkeypatch: pytest.MonkeyPatch) -> None:
+    made: list[str] = []
+    real: Any = tempfile.mkstemp
+
+    def spy_mkstemp(*args: Any, **kwargs: Any) -> tuple[int, str]:
+        descriptor, path = real(*args, **kwargs)
+        made.append(path)
+        return descriptor, path
+
+    def failing_fdopen(descriptor: int, *args: Any, **kwargs: Any) -> Any:
+        os.close(descriptor)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(tempfile, "mkstemp", spy_mkstemp)
+    monkeypatch.setattr(os, "fdopen", failing_fdopen)
+
+    with pytest.raises(OSError, match="disk full"):
+        save_page("x")
+
+    assert made and not os.path.exists(made[0])
