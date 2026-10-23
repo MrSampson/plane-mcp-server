@@ -228,3 +228,17 @@ def test_an_edge_to_an_unlisted_item_is_left_out() -> None:
     result: dict[str, Any] = _result(edges=[{"from": "GONE-9", "to": "OTHER-2", "type": "blocking"}])
 
     assert 'data-in=""' in render_html(result, _none, "t")
+
+
+def test_edges_are_anchored_on_the_sides_that_face_each_other() -> None:
+    page: str = render_html(_result(), _none, "t")
+
+    assert "rb.left>=ra.right" in page and "rb.right<=ra.left" in page
+    assert "at(ra,ra.left)" in page and "at(rb,rb.right)" in page
+
+
+def test_faded_cards_are_muted_by_colour_so_lines_cannot_show_through() -> None:
+    page: str = render_html(_result(), _none, "t")
+
+    assert "opacity" not in page
+    assert ".card.settled,.card.dim{color:var(--faint)}" in page

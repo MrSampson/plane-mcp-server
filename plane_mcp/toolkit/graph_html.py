@@ -28,9 +28,9 @@ CLOUD_API_URL: str = "https://api.plane.so"
 CLOUD_APP_URL: str = "https://app.plane.so"
 
 _STYLE: str = """
-:root{--bg:#fff;--fg:#1b1f24;--mut:#6b7280;--line:#c9ced6;--seed:#2563eb;--dash:#9ca3af;--bad:#d33}
+:root{--bg:#fff;--fg:#1b1f24;--mut:#6b7280;--line:#c9ced6;--seed:#2563eb;--dash:#9ca3af;--bad:#d33;--faint:#b5bbc4}
 @media(prefers-color-scheme:dark){
-:root{--bg:#14171c;--fg:#e6e8eb;--mut:#9aa3af;--line:#3a414b;--seed:#60a5fa;--dash:#6b7280;--bad:#f87171}
+:root{--bg:#14171c;--fg:#e6e8eb;--mut:#9aa3af;--line:#3a414b;--seed:#60a5fa;--dash:#6b7280;--bad:#f87171;--faint:#4a525d}
 }
 body{margin:0;background:var(--bg);color:var(--fg);font:13px system-ui}
 #wrap{position:relative;padding:16px;overflow:auto}
@@ -41,9 +41,10 @@ h3{margin:0 0 8px}h3 small{display:block;font-weight:400;color:var(--mut);font-s
 h4{margin:10px 0 4px;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
 .card{border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:6px;background:var(--bg)}
 .card.member{border:2px solid var(--seed)}.card.boundary{border-style:dashed;border-color:var(--dash)}
-.card.cycle{border-color:var(--bad)}.card.settled{opacity:.55}
+.card.cycle{border-color:var(--bad)}
+.card.settled,.card.dim{color:var(--faint)}.card.settled .st,.card.dim .st{color:var(--faint)}
 .card a{color:inherit;font-weight:600}.st{color:var(--mut);font-size:11px}.nm{margin-top:2px}
-.card.dim{opacity:.25}.card.hot{outline:2px solid var(--seed)}
+.card.hot{outline:2px solid var(--seed)}
 svg{position:absolute;top:0;left:0;pointer-events:none;z-index:0}
 path{fill:none;stroke:var(--line);stroke-width:1.2}path.plain{stroke-dasharray:4 3}
 path.hot{stroke:var(--seed);stroke-width:2}
@@ -52,6 +53,7 @@ path.hot{stroke:var(--seed);stroke-width:2}
 
 _SCRIPT: str = """
 const cards=[...document.querySelectorAll('.card')];
+const SIDE_BEND=40;
 const svg=document.getElementById('svg'),wrap=document.getElementById('wrap');
 const byKey=Object.fromEntries(cards.map(c=>[c.dataset.key,c]));
 function draw(){
@@ -59,15 +61,18 @@ function draw(){
  const o=wrap.getBoundingClientRect();
  svg.setAttribute('width',wrap.scrollWidth);svg.setAttribute('height',wrap.scrollHeight);
  for(const c of cards)for(const e of (c.dataset.in||'').split(' ').filter(Boolean)){
-  const [from,kind]=e.split(':'),a=byKey[from];
+  const [src,kind]=e.split(':'),a=byKey[src];
   if(!a)continue;
   const ra=a.getBoundingClientRect(),rb=c.getBoundingClientRect();
-  const x1=ra.right-o.left+wrap.scrollLeft,y1=ra.top+ra.height/2-o.top+wrap.scrollTop;
-  const x2=rb.left-o.left+wrap.scrollLeft,y2=rb.top+rb.height/2-o.top+wrap.scrollTop,m=(x1+x2)/2;
+  const at=(r,x)=>[x-o.left+wrap.scrollLeft,r.top+r.height/2-o.top+wrap.scrollTop];
+  let start,end,bend;
+  if(rb.left>=ra.right){start=at(ra,ra.right);end=at(rb,rb.left);bend=(start[0]+end[0])/2;}
+  else if(rb.right<=ra.left){start=at(ra,ra.left);end=at(rb,rb.right);bend=(start[0]+end[0])/2;}
+  else{start=at(ra,ra.right);end=at(rb,rb.right);bend=Math.max(start[0],end[0])+SIDE_BEND;}
   const p=document.createElementNS('http://www.w3.org/2000/svg','path');
-  p.setAttribute('d','M'+x1+' '+y1+' C'+m+' '+y1+' '+m+' '+y2+' '+x2+' '+y2);
+  p.setAttribute('d','M'+start[0]+' '+start[1]+' C'+bend+' '+start[1]+' '+bend+' '+end[1]+' '+end[0]+' '+end[1]);
   if(kind==='plain')p.classList.add('plain');
-  p.dataset.f=from;p.dataset.t=c.dataset.key;svg.appendChild(p);
+  p.dataset.f=src;p.dataset.t=c.dataset.key;svg.appendChild(p);
  }
 }
 cards.forEach(c=>{
