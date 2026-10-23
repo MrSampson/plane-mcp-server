@@ -273,3 +273,11 @@ def test_faded_cards_are_muted_by_colour_so_lines_cannot_show_through() -> None:
 
 def test_the_svg_may_draw_past_its_box_so_a_bow_in_the_last_column_is_not_clipped() -> None:
     assert "overflow:visible" in render_html(_result(), _none, "t")
+
+
+def test_a_dependency_edge_ends_in_an_arrowhead_and_a_plain_relation_does_not() -> None:
+    page: str = render_html(_result(), _none, "t")
+
+    assert 'id="arrow"' in page and 'id="arrow-hot"' in page
+    assert "if(p.dataset.k==='order')p.setAttribute('marker-end'" in page
+    assert "An arrow points at the item that waits" in page

@@ -49,13 +49,14 @@ h4{margin:10px 0 4px;color:var(--mut);font-size:11px;text-transform:uppercase;le
 svg{position:absolute;top:0;left:0;pointer-events:none;z-index:0;overflow:visible}
 path{fill:none;stroke:var(--line);stroke-width:1.2}path.plain{stroke-dasharray:4 3}
 path.hot{stroke:var(--seed);stroke-width:2}
+#arrow polygon{fill:var(--line)}#arrow-hot polygon{fill:var(--seed)}
 .legend{color:var(--mut);margin:0 0 12px}
 """
 
 _SCRIPT: str = """
 const cards=[...document.querySelectorAll('.card')];
 const SIDE_BEND=40;
-const svg=document.getElementById('svg'),wrap=document.getElementById('wrap');
+const svg=document.getElementById('svg'),edges=document.getElementById('edges'),wrap=document.getElementById('wrap');
 const byKey=Object.fromEntries(cards.map(c=>[c.dataset.key,c]));
 function anchor(ra,rb){
  const mid=r=>r.top+r.height/2;
@@ -63,8 +64,11 @@ function anchor(ra,rb){
  if(rb.right<=ra.left)return{x1:ra.left,y1:mid(ra),x2:rb.right,y2:mid(rb),bend:(ra.left+rb.right)/2};
  return{x1:ra.right,y1:mid(ra),x2:rb.right,y2:mid(rb),bend:Math.max(ra.right,rb.right)+SIDE_BEND};
 }
+function mark(p,hot){
+ if(p.dataset.k==='order')p.setAttribute('marker-end','url(#'+(hot?'arrow-hot':'arrow')+')');
+}
 function draw(){
- svg.replaceChildren();
+ edges.replaceChildren();
  const o=wrap.getBoundingClientRect(),dx=wrap.scrollLeft-o.left,dy=wrap.scrollTop-o.top;
  svg.setAttribute('width',wrap.scrollWidth);svg.setAttribute('height',wrap.scrollHeight);
  for(const c of cards)for(const e of (c.dataset.in||'').split(' ').filter(Boolean)){
@@ -75,29 +79,39 @@ function draw(){
   const x1=g.x1+dx,y1=g.y1+dy,x2=g.x2+dx,y2=g.y2+dy,bend=g.bend+dx;
   p.setAttribute('d','M'+x1+' '+y1+' C'+bend+' '+y1+' '+bend+' '+y2+' '+x2+' '+y2);
   if(kind==='plain')p.classList.add('plain');
-  p.dataset.f=src;p.dataset.t=c.dataset.key;svg.appendChild(p);
+  p.dataset.f=src;p.dataset.t=c.dataset.key;p.dataset.k=kind;mark(p,false);edges.appendChild(p);
  }
 }
 cards.forEach(c=>{
  c.onmouseenter=()=>{
   const keep=new Set([c.dataset.key]);
-  svg.querySelectorAll('path').forEach(p=>{
+  edges.querySelectorAll('path').forEach(p=>{
    const hot=p.dataset.t===c.dataset.key||p.dataset.f===c.dataset.key;
-   p.classList.toggle('hot',hot);
+   p.classList.toggle('hot',hot);mark(p,hot);
    if(hot){keep.add(p.dataset.f);keep.add(p.dataset.t);}
   });
   cards.forEach(x=>x.classList.toggle('dim',!keep.has(x.dataset.key)));
  };
  c.onmouseleave=()=>{
-  svg.querySelectorAll('path').forEach(p=>p.classList.remove('hot'));
+  edges.querySelectorAll('path').forEach(p=>{p.classList.remove('hot');mark(p,false);});
   cards.forEach(x=>x.classList.remove('dim'));
  };
 });
 draw();addEventListener('resize',draw);
 """
 
+_MARKERS: str = (
+    "<defs>"
+    + "".join(
+        f'<marker id="{name}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" '
+        f'markerUnits="userSpaceOnUse"><polygon points="0,0 8,4 0,8"/></marker>'
+        for name in ("arrow", "arrow-hot")
+    )
+    + "</defs>"
+)
 _LEGEND: str = (
     "Blue border: a module member. Dashed border: relations not read. Faded: settled. "
+    "An arrow points at the item that waits. "
     "Dashed line: relates_to or duplicate. Hover an item to trace its blockers and dependents."
 )
 
@@ -205,7 +219,7 @@ def render_html(result: dict[str, Any], link: ItemLink, title: str) -> str:
         f'<meta http-equiv="Content-Security-Policy" content="{CONTENT_SECURITY_POLICY}">'
         f'<title>{html.escape(title)}</title><style>{_STYLE}</style><body><div id="wrap">'
         f'<h1>{html.escape(title)}</h1><p class="legend">{_LEGEND}</p>{truncated}'
-        f'<svg id="svg"></svg><div id="cols">{"".join(body)}</div></div>'
+        f'<svg id="svg">{_MARKERS}<g id="edges"></g></svg><div id="cols">{"".join(body)}</div></div>'
         f"<script>{_SCRIPT}</script></body></html>"
     )
 
