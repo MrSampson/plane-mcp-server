@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import stat
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from plane_mcp.toolkit.graph_html import item_link, render_html, save_page
+from plane_mcp.toolkit.graph_html import _SCRIPT, item_link, render_html, save_page
 
 
 def _node(identifier: str, project: str = "PROJ", **overrides: Any) -> dict[str, Any]:
@@ -230,15 +233,43 @@ def test_an_edge_to_an_unlisted_item_is_left_out() -> None:
     assert 'data-in=""' in render_html(result, _none, "t")
 
 
-def test_edges_are_anchored_on_the_sides_that_face_each_other() -> None:
-    page: str = render_html(_result(), _none, "t")
+NODE: str | None = shutil.which("node")
 
-    assert "rb.left>=ra.right" in page and "rb.right<=ra.left" in page
-    assert "at(ra,ra.left)" in page and "at(rb,rb.right)" in page
+
+def _anchor(left_a: int, right_a: int, left_b: int, right_b: int) -> dict[str, float]:
+    """Runs the page's `anchor` function on two boxes of height 20, the second 100 lower."""
+    start: int = _SCRIPT.index("function anchor")
+    end: int = _SCRIPT.index("function draw")
+    program: str = (
+        "const SIDE_BEND=40;"
+        + _SCRIPT[start:end]
+        + f"console.log(JSON.stringify(anchor({{left:{left_a},right:{right_a},top:0,height:20}},"
+        + f"{{left:{left_b},right:{right_b},top:100,height:20}})));"
+    )
+    done: subprocess.CompletedProcess[str] = subprocess.run(
+        [NODE or "node", "-e", program], capture_output=True, text=True, check=True
+    )
+    return json.loads(done.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="needs node to run the page's script")
+class TestAnchoring:
+    def test_a_forward_edge_leaves_the_right_side_and_enters_the_left(self) -> None:
+        assert _anchor(0, 200, 300, 500) == {"x1": 200, "y1": 10, "x2": 300, "y2": 110, "bend": 250}
+
+    def test_a_backward_edge_leaves_the_left_side_and_enters_the_right(self) -> None:
+        assert _anchor(300, 500, 0, 200) == {"x1": 300, "y1": 10, "x2": 200, "y2": 110, "bend": 250}
+
+    def test_an_edge_within_a_column_bows_out_past_the_right_side(self) -> None:
+        assert _anchor(0, 200, 0, 220) == {"x1": 200, "y1": 10, "x2": 220, "y2": 110, "bend": 260}
 
 
 def test_faded_cards_are_muted_by_colour_so_lines_cannot_show_through() -> None:
     page: str = render_html(_result(), _none, "t")
 
     assert "opacity" not in page
-    assert ".card.settled,.card.dim{color:var(--faint)}" in page
+    assert ".card.dim,.card.dim .st{color:var(--faint)}" in page
+
+
+def test_the_svg_may_draw_past_its_box_so_a_bow_in_the_last_column_is_not_clipped() -> None:
+    assert "overflow:visible" in render_html(_result(), _none, "t")

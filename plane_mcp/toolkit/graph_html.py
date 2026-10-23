@@ -42,10 +42,11 @@ h4{margin:10px 0 4px;color:var(--mut);font-size:11px;text-transform:uppercase;le
 .card{border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:6px;background:var(--bg)}
 .card.member{border:2px solid var(--seed)}.card.boundary{border-style:dashed;border-color:var(--dash)}
 .card.cycle{border-color:var(--bad)}
-.card.settled,.card.dim{color:var(--faint)}.card.settled .st,.card.dim .st{color:var(--faint)}
+.card.settled,.card.settled .st{color:var(--mut)}
 .card a{color:inherit;font-weight:600}.st{color:var(--mut);font-size:11px}.nm{margin-top:2px}
 .card.hot{outline:2px solid var(--seed)}
-svg{position:absolute;top:0;left:0;pointer-events:none;z-index:0}
+.card.dim,.card.dim .st{color:var(--faint)}.card.dim{border-color:var(--faint)}
+svg{position:absolute;top:0;left:0;pointer-events:none;z-index:0;overflow:visible}
 path{fill:none;stroke:var(--line);stroke-width:1.2}path.plain{stroke-dasharray:4 3}
 path.hot{stroke:var(--seed);stroke-width:2}
 .legend{color:var(--mut);margin:0 0 12px}
@@ -56,21 +57,23 @@ const cards=[...document.querySelectorAll('.card')];
 const SIDE_BEND=40;
 const svg=document.getElementById('svg'),wrap=document.getElementById('wrap');
 const byKey=Object.fromEntries(cards.map(c=>[c.dataset.key,c]));
+function anchor(ra,rb){
+ const mid=r=>r.top+r.height/2;
+ if(rb.left>=ra.right)return{x1:ra.right,y1:mid(ra),x2:rb.left,y2:mid(rb),bend:(ra.right+rb.left)/2};
+ if(rb.right<=ra.left)return{x1:ra.left,y1:mid(ra),x2:rb.right,y2:mid(rb),bend:(ra.left+rb.right)/2};
+ return{x1:ra.right,y1:mid(ra),x2:rb.right,y2:mid(rb),bend:Math.max(ra.right,rb.right)+SIDE_BEND};
+}
 function draw(){
  svg.replaceChildren();
- const o=wrap.getBoundingClientRect();
+ const o=wrap.getBoundingClientRect(),dx=wrap.scrollLeft-o.left,dy=wrap.scrollTop-o.top;
  svg.setAttribute('width',wrap.scrollWidth);svg.setAttribute('height',wrap.scrollHeight);
  for(const c of cards)for(const e of (c.dataset.in||'').split(' ').filter(Boolean)){
   const [src,kind]=e.split(':'),a=byKey[src];
   if(!a)continue;
-  const ra=a.getBoundingClientRect(),rb=c.getBoundingClientRect();
-  const at=(r,x)=>[x-o.left+wrap.scrollLeft,r.top+r.height/2-o.top+wrap.scrollTop];
-  let start,end,bend;
-  if(rb.left>=ra.right){start=at(ra,ra.right);end=at(rb,rb.left);bend=(start[0]+end[0])/2;}
-  else if(rb.right<=ra.left){start=at(ra,ra.left);end=at(rb,rb.right);bend=(start[0]+end[0])/2;}
-  else{start=at(ra,ra.right);end=at(rb,rb.right);bend=Math.max(start[0],end[0])+SIDE_BEND;}
+  const g=anchor(a.getBoundingClientRect(),c.getBoundingClientRect());
   const p=document.createElementNS('http://www.w3.org/2000/svg','path');
-  p.setAttribute('d','M'+start[0]+' '+start[1]+' C'+bend+' '+start[1]+' '+bend+' '+end[1]+' '+end[0]+' '+end[1]);
+  const x1=g.x1+dx,y1=g.y1+dy,x2=g.x2+dx,y2=g.y2+dy,bend=g.bend+dx;
+  p.setAttribute('d','M'+x1+' '+y1+' C'+bend+' '+y1+' '+bend+' '+y2+' '+x2+' '+y2);
   if(kind==='plain')p.classList.add('plain');
   p.dataset.f=src;p.dataset.t=c.dataset.key;svg.appendChild(p);
  }
