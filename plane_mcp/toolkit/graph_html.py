@@ -28,9 +28,9 @@ CLOUD_API_URL: str = "https://api.plane.so"
 CLOUD_APP_URL: str = "https://app.plane.so"
 
 _STYLE: str = """
-:root{--bg:#fff;--fg:#1b1f24;--mut:#6b7280;--line:#c9ced6;--seed:#2563eb;--dash:#9ca3af;--bad:#d33}
+:root{--bg:#fff;--fg:#1b1f24;--mut:#6b7280;--line:#c9ced6;--seed:#2563eb;--dash:#9ca3af;--bad:#d33;--faint:#b5bbc4}
 @media(prefers-color-scheme:dark){
-:root{--bg:#14171c;--fg:#e6e8eb;--mut:#9aa3af;--line:#3a414b;--seed:#60a5fa;--dash:#6b7280;--bad:#f87171}
+:root{--bg:#14171c;--fg:#e6e8eb;--mut:#9aa3af;--line:#3a414b;--seed:#60a5fa;--dash:#6b7280;--bad:#f87171;--faint:#4a525d}
 }
 body{margin:0;background:var(--bg);color:var(--fg);font:13px system-ui}
 #wrap{position:relative;padding:16px;overflow:auto}
@@ -41,39 +41,49 @@ h3{margin:0 0 8px}h3 small{display:block;font-weight:400;color:var(--mut);font-s
 h4{margin:10px 0 4px;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
 .card{border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:6px;background:var(--bg)}
 .card.member{border:2px solid var(--seed)}.card.boundary{border-style:dashed;border-color:var(--dash)}
-.card.cycle{border-color:var(--bad)}.card.settled{opacity:.55}
+.card.cycle{border-color:var(--bad)}
+.card.settled,.card.settled .st{color:var(--mut)}
 .card a{color:inherit;font-weight:600}.st{color:var(--mut);font-size:11px}.nm{margin-top:2px}
-.card.dim{opacity:.25}.card.hot{outline:2px solid var(--seed)}
-svg{position:absolute;top:0;left:0;pointer-events:none;z-index:0}
+.card.hot{outline:2px solid var(--seed)}
+.card.dim,.card.dim .st{color:var(--faint)}.card.dim{border-color:var(--faint)}
+svg{position:absolute;top:0;left:0;pointer-events:none;z-index:0;overflow:visible}
 path{fill:none;stroke:var(--line);stroke-width:1.2}path.plain{stroke-dasharray:4 3}
+path.order{marker-end:url(#arrow)}path.order.hot{marker-end:url(#arrow-hot)}
 path.hot{stroke:var(--seed);stroke-width:2}
+#arrow polygon{fill:var(--line)}#arrow-hot polygon{fill:var(--seed)}
 .legend{color:var(--mut);margin:0 0 12px}
 """
 
 _SCRIPT: str = """
 const cards=[...document.querySelectorAll('.card')];
-const svg=document.getElementById('svg'),wrap=document.getElementById('wrap');
+const SIDE_BEND=40;
+const svg=document.getElementById('svg'),edges=document.getElementById('edges'),wrap=document.getElementById('wrap');
 const byKey=Object.fromEntries(cards.map(c=>[c.dataset.key,c]));
+function anchor(ra,rb){
+ const mid=r=>r.top+r.height/2;
+ if(rb.left>=ra.right)return{x1:ra.right,y1:mid(ra),x2:rb.left,y2:mid(rb),bend:(ra.right+rb.left)/2};
+ if(rb.right<=ra.left)return{x1:ra.left,y1:mid(ra),x2:rb.right,y2:mid(rb),bend:(ra.left+rb.right)/2};
+ return{x1:ra.right,y1:mid(ra),x2:rb.right,y2:mid(rb),bend:Math.max(ra.right,rb.right)+SIDE_BEND};
+}
 function draw(){
- svg.replaceChildren();
- const o=wrap.getBoundingClientRect();
+ edges.replaceChildren();
+ const o=wrap.getBoundingClientRect(),dx=wrap.scrollLeft-o.left,dy=wrap.scrollTop-o.top;
  svg.setAttribute('width',wrap.scrollWidth);svg.setAttribute('height',wrap.scrollHeight);
  for(const c of cards)for(const e of (c.dataset.in||'').split(' ').filter(Boolean)){
-  const [from,kind]=e.split(':'),a=byKey[from];
+  const [src,kind]=e.split(':'),a=byKey[src];
   if(!a)continue;
-  const ra=a.getBoundingClientRect(),rb=c.getBoundingClientRect();
-  const x1=ra.right-o.left+wrap.scrollLeft,y1=ra.top+ra.height/2-o.top+wrap.scrollTop;
-  const x2=rb.left-o.left+wrap.scrollLeft,y2=rb.top+rb.height/2-o.top+wrap.scrollTop,m=(x1+x2)/2;
+  const g=anchor(a.getBoundingClientRect(),c.getBoundingClientRect());
   const p=document.createElementNS('http://www.w3.org/2000/svg','path');
-  p.setAttribute('d','M'+x1+' '+y1+' C'+m+' '+y1+' '+m+' '+y2+' '+x2+' '+y2);
-  if(kind==='plain')p.classList.add('plain');
-  p.dataset.f=from;p.dataset.t=c.dataset.key;svg.appendChild(p);
+  const x1=g.x1+dx,y1=g.y1+dy,x2=g.x2+dx,y2=g.y2+dy,bend=g.bend+dx;
+  p.setAttribute('d','M'+x1+' '+y1+' C'+bend+' '+y1+' '+bend+' '+y2+' '+x2+' '+y2);
+  p.classList.add(kind);
+  p.dataset.f=src;p.dataset.t=c.dataset.key;edges.appendChild(p);
  }
 }
 cards.forEach(c=>{
  c.onmouseenter=()=>{
   const keep=new Set([c.dataset.key]);
-  svg.querySelectorAll('path').forEach(p=>{
+  edges.querySelectorAll('path').forEach(p=>{
    const hot=p.dataset.t===c.dataset.key||p.dataset.f===c.dataset.key;
    p.classList.toggle('hot',hot);
    if(hot){keep.add(p.dataset.f);keep.add(p.dataset.t);}
@@ -81,15 +91,25 @@ cards.forEach(c=>{
   cards.forEach(x=>x.classList.toggle('dim',!keep.has(x.dataset.key)));
  };
  c.onmouseleave=()=>{
-  svg.querySelectorAll('path').forEach(p=>p.classList.remove('hot'));
+  edges.querySelectorAll('path').forEach(p=>{p.classList.remove('hot');});
   cards.forEach(x=>x.classList.remove('dim'));
  };
 });
 draw();addEventListener('resize',draw);
 """
 
+_MARKERS: str = (
+    "<defs>"
+    + "".join(
+        f'<marker id="{name}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" '
+        'markerUnits="userSpaceOnUse"><polygon points="0,0 8,4 0,8"/></marker>'
+        for name in ("arrow", "arrow-hot")
+    )
+    + "</defs>"
+)
 _LEGEND: str = (
     "Blue border: a module member. Dashed border: relations not read. Faded: settled. "
+    "An arrow points at the item that waits. "
     "Dashed line: relates_to or duplicate. Hover an item to trace its blockers and dependents."
 )
 
@@ -197,7 +217,7 @@ def render_html(result: dict[str, Any], link: ItemLink, title: str) -> str:
         f'<meta http-equiv="Content-Security-Policy" content="{CONTENT_SECURITY_POLICY}">'
         f'<title>{html.escape(title)}</title><style>{_STYLE}</style><body><div id="wrap">'
         f'<h1>{html.escape(title)}</h1><p class="legend">{_LEGEND}</p>{truncated}'
-        f'<svg id="svg"></svg><div id="cols">{"".join(body)}</div></div>'
+        f'<svg id="svg">{_MARKERS}<g id="edges"></g></svg><div id="cols">{"".join(body)}</div></div>'
         f"<script>{_SCRIPT}</script></body></html>"
     )
 

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import stat
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from plane_mcp.toolkit.graph_html import item_link, render_html, save_page
+from plane_mcp.toolkit.graph_html import _SCRIPT, item_link, render_html, save_page
 
 
 def _node(identifier: str, project: str = "PROJ", **overrides: Any) -> dict[str, Any]:
@@ -228,3 +231,61 @@ def test_an_edge_to_an_unlisted_item_is_left_out() -> None:
     result: dict[str, Any] = _result(edges=[{"from": "GONE-9", "to": "OTHER-2", "type": "blocking"}])
 
     assert 'data-in=""' in render_html(result, _none, "t")
+
+
+NODE: str | None = shutil.which("node")
+
+
+def _anchor(left_a: int, right_a: int, left_b: int, right_b: int) -> dict[str, float]:
+    """Runs the page's `anchor` function on two boxes of height 20, the second 100 lower."""
+    start: int = _SCRIPT.index("function anchor")
+    end: int = _SCRIPT.index("function draw")
+    program: str = (
+        "const SIDE_BEND=40;"
+        + _SCRIPT[start:end]
+        + f"console.log(JSON.stringify(anchor({{left:{left_a},right:{right_a},top:0,height:20}},"
+        + f"{{left:{left_b},right:{right_b},top:100,height:20}})));"
+    )
+    done: subprocess.CompletedProcess[str] = subprocess.run(
+        [NODE or "node", "-e", program], capture_output=True, text=True, check=True
+    )
+    return json.loads(done.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="needs node to run the page's script")
+class TestAnchoring:
+    def test_a_forward_edge_leaves_the_right_side_and_enters_the_left(self) -> None:
+        assert _anchor(0, 200, 300, 500) == {"x1": 200, "y1": 10, "x2": 300, "y2": 110, "bend": 250}
+
+    def test_a_backward_edge_leaves_the_left_side_and_enters_the_right(self) -> None:
+        assert _anchor(300, 500, 0, 200) == {"x1": 300, "y1": 10, "x2": 200, "y2": 110, "bend": 250}
+
+    def test_an_edge_within_a_column_bows_out_past_the_right_side(self) -> None:
+        assert _anchor(0, 200, 0, 220) == {"x1": 200, "y1": 10, "x2": 220, "y2": 110, "bend": 260}
+
+
+def test_faded_cards_are_muted_by_colour_so_lines_cannot_show_through() -> None:
+    page: str = render_html(_result(), _none, "t")
+
+    assert "opacity" not in page
+    assert ".card.dim,.card.dim .st{color:var(--faint)}" in page
+
+
+def test_the_svg_may_draw_past_its_box_so_a_bow_in_the_last_column_is_not_clipped() -> None:
+    assert "overflow:visible" in render_html(_result(), _none, "t")
+
+
+def test_a_dependency_edge_ends_in_an_arrowhead_and_a_plain_relation_does_not() -> None:
+    page: str = render_html(_result(), _none, "t")
+
+    assert 'id="arrow"' in page and 'id="arrow-hot"' in page
+    assert "path.order{marker-end:url(#arrow)}path.order.hot{marker-end:url(#arrow-hot)}" in page
+    assert "marker-end" not in page.split("path.plain{")[1].split("\n")[0]
+    assert "An arrow points at the item that waits" in page
+
+
+def test_a_redraw_keeps_the_arrowheads_because_it_clears_only_the_edges() -> None:
+    page: str = render_html(_result(), _none, "t")
+
+    assert page.index("<defs>") < page.index('<g id="edges">')
+    assert "edges.replaceChildren()" in _SCRIPT and "svg.replaceChildren" not in _SCRIPT
