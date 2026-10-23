@@ -10,6 +10,7 @@ never on a 404 that means "this particular id does not exist".
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, get_args
 
@@ -613,7 +614,7 @@ def _graph(registered: dict[str, Any], spy: Any, **kwargs: Any) -> dict[str, Any
             name="x", priority="high", sequence_id=5, project="proj-1", state=SimpleNamespace(name="Todo", group="x")
         ),
     )
-    spy.returns["projects.retrieve"] = SimpleNamespace(identifier="PROJ")
+    spy.returns["projects.retrieve"] = SimpleNamespace(identifier="PROJ", name="Platform")
     arguments: dict[str, Any] = {"action": "graph", "project_id": "proj-1", "workitem_id": "wi-1", "depth": 0}
     arguments.update(kwargs)
     return registered["workitem_relation"].fn(**arguments)
@@ -656,6 +657,65 @@ def test_graph_adds_a_diagram_only_when_asked(registered: dict[str, Any], spy: A
     assert result["diagram"].startswith("graph TD")
 
 
+def test_graph_adds_a_page_titled_by_the_seed_item_when_asked(registered: dict[str, Any], spy: Any) -> None:
+    result = _graph(registered, spy, format="html")
+
+    assert "<h1>Platform / PROJ-5 x</h1>" in result["html"]
+    assert "diagram" not in result
+
+
+def test_graph_titles_a_module_page_with_project_and_module(registered: dict[str, Any], spy: Any) -> None:
+    spy.returns["modules.list_work_items"] = SimpleNamespace(
+        results=[SimpleNamespace(id="wi-1", project="proj-1")], next_page_results=False, next_cursor=""
+    )
+    spy.returns["modules.retrieve"] = SimpleNamespace(name="Launch")
+
+    result = _graph(registered, spy, workitem_id="", module_id="mod-1", format="html")
+
+    assert "<h1>Platform / Launch</h1>" in result["html"]
+
+
+def test_graph_titles_a_page_with_ids_when_the_names_are_forbidden(registered: dict[str, Any], spy: Any) -> None:
+    spy.returns["modules.list_work_items"] = SimpleNamespace(
+        results=[SimpleNamespace(id="wi-1", project="proj-1")], next_page_results=False, next_cursor=""
+    )
+    spy.returns["modules.retrieve"] = HttpError("Forbidden", status_code=403, response={})
+
+    result = _graph(registered, spy, workitem_id="", module_id="mod-1", format="html")
+
+    assert "<h1>Platform / mod-1</h1>" in result["html"]
+
+
+def test_graph_html_file_returns_a_path_and_not_the_page(registered: dict[str, Any], spy: Any) -> None:
+    result = _graph(registered, spy, format="html_file")
+
+    path: Path = Path(result["path"])
+    try:
+        assert "<h1>Platform / PROJ-5 x</h1>" in path.read_text(encoding="utf-8")
+        assert "html" not in result
+    finally:
+        path.unlink()
+
+
+def test_graph_html_file_is_refused_over_http(
+    registered: dict[str, Any], spy: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("plane_mcp.tools.workitem_relation.get_http_request", lambda: object())
+
+    result = _graph(registered, spy, format="html_file")
+
+    assert isinstance(result, str) and "needs stdio" in result
+    assert "work_items.relations._get" not in spy.recorder.methods
+
+
+def test_graph_adds_neither_page_nor_path_by_default(registered: dict[str, Any], spy: Any) -> None:
+    result: dict[str, Any] = _graph(registered, spy)
+    diagram: dict[str, Any] = _graph(registered, spy, format="mermaid")
+
+    assert "html" not in result and "path" not in result
+    assert "html" not in diagram and "path" not in diagram
+
+
 def test_graph_takes_a_module_as_its_seed(registered: dict[str, Any], spy: Any) -> None:
     spy.returns["modules.list_work_items"] = SimpleNamespace(
         results=[SimpleNamespace(id="wi-1", project="proj-1")], next_page_results=False, next_cursor=""
@@ -686,6 +746,7 @@ def test_graph_reports_a_module_larger_than_max_items_as_truncated(registered: d
         ({"module_id": "mod-1"}, "only one of workitem_id or module_id"),
         ({"project_id": ""}, "project_id"),
         ({"format": "svg"}, "mermaid"),
+        ({"format": "svg"}, "html"),
         ({"depth": -1}, "depth"),
         ({"max_items": -1}, "max_items"),
         ({"max_items": 151}, "at most 150"),

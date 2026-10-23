@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
+from plane.errors.errors import HttpError
+
 from plane_mcp.toolkit.graph_walk import Ref
-from plane_mcp.toolkit.relation_graph import assemble_graph
+from plane_mcp.toolkit.relation_graph import assemble_graph, graph_title
 
 Buckets = dict[str, list[dict[str, str]]]
 
@@ -206,3 +209,49 @@ def test_a_settled_item_at_the_boundary_does_not_make_its_dependents_unordered()
 
     assert result["unordered"] == {"PROJ-3": "unexpanded"}
     assert result["order"] == [["PROJ-2"]]
+
+
+class _Client:
+    """Answers the two name lookups a title makes; a value that is an exception is raised."""
+
+    def __init__(self, project: Any, module: Any = None) -> None:
+        self.projects: Any = SimpleNamespace(retrieve=lambda **kw: self._answer(project))
+        self.modules: Any = SimpleNamespace(retrieve=lambda **kw: self._answer(module))
+
+    @staticmethod
+    def _answer(value: Any) -> Any:
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+def _missing() -> HttpError:
+    return HttpError("Not Found", status_code=404, response={})
+
+
+def _titled(client: _Client, module_id: str = "", workitem_id: str = "a") -> str:
+    result: dict[str, Any] = _graph(_chain(), [Ref("a", "p1")], depth=0)
+    return graph_title(client, "ws", "p1", module_id=module_id, workitem_id=workitem_id, result=result)
+
+
+def test_a_work_item_title_names_the_project_and_the_seed() -> None:
+    assert _titled(_Client(SimpleNamespace(name="Platform"))) == "Platform / PROJ-1 item 1"
+
+
+def test_a_title_falls_back_to_the_project_identifier_when_the_project_is_unreadable() -> None:
+    assert _titled(_Client(_missing())) == "PROJ / PROJ-1 item 1"
+
+
+def test_a_title_falls_back_to_the_module_id_when_the_module_is_unreadable() -> None:
+    assert _titled(_Client(SimpleNamespace(name="Platform"), _missing()), module_id="m1") == "Platform / m1"
+
+
+def test_a_title_survives_a_seed_missing_from_the_result() -> None:
+    assert _titled(_Client(SimpleNamespace(name="Platform")), workitem_id="gone") == "Platform / gone"
+
+
+def test_a_nameless_module_is_titled_by_its_id() -> None:
+    assert (
+        _titled(_Client(SimpleNamespace(name="Platform"), SimpleNamespace(name=None)), module_id="m1")
+        == "Platform / m1"
+    )
