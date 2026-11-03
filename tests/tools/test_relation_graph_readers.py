@@ -67,6 +67,14 @@ def test_an_unreadable_project_has_no_identifier(spy: Any) -> None:
     assert project_identifier_reader(spy, "acme")("p1") is None
 
 
+def test_a_rate_limited_project_lookup_falls_back_to_no_identifier(spy: Any) -> None:
+    """The walk has just spent its retries, so the lookup that follows is likely limited too;
+    raising would discard the graph already read."""
+    spy.returns["projects.retrieve"] = HttpError("Too Many Requests", 429)
+
+    assert project_identifier_reader(spy, "acme")("p1") is None
+
+
 def test_module_seeds_page_through_the_module_and_stop_past_the_cap(spy: Any) -> None:
     page: SimpleNamespace = SimpleNamespace(
         results=[SimpleNamespace(id=f"wi-{n}", project="p1") for n in range(3)],

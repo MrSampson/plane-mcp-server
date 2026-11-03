@@ -99,8 +99,8 @@ def test_every_resource_session_retries_a_429(connected):
     connected("stdio")
     client = get_plane_client_context().client
 
-    sessions = [r.session for r in vars(client).values() if hasattr(r, "session")]
-    assert sessions, "found no resource sessions to check"
+    sessions = client_module._sessions(client)
+    assert client.work_items.relations.session in sessions, "the graph reads relations through this one"
     for session in sessions:
         retry = session.get_adapter("https://plane.example").max_retries
         assert retry.total == client_module.RATE_LIMIT_RETRIES

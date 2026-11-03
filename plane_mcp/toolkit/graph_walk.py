@@ -126,6 +126,7 @@ def walk(
             for unread in [ref, *(queued for queued, _ in pending)]:
                 result.cut.append(unread.id)
                 result.unexpanded.add(unread.id)
+            result.details.pop(ref.id, None)
             break
 
     result.edges = [e for e in dedupe(result.edges) if e.source in result.refs and e.target in result.refs]

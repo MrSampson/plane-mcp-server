@@ -3,6 +3,7 @@
 import os
 from typing import Any, NamedTuple
 
+import requests
 from fastmcp.server.auth.auth import AccessToken
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.utilities.logging import get_logger
@@ -16,6 +17,24 @@ logger = get_logger(__name__)
 # A walk over a large module can outrun an instance's per-key rate limit several times over.
 RATE_LIMIT_RETRIES: int = 5
 RETRY_POLICY: RetryConfig = RetryConfig(total=RATE_LIMIT_RETRIES)
+
+
+def _sessions(root: object) -> list[Any]:
+    """Every `requests.Session` reachable from `root` through SDK objects, sub-resources included."""
+    found: list[Any] = []
+    seen: set[int] = {id(root)}
+    pending: list[object] = [root]
+    while pending:
+        node: object = pending.pop()
+        for value in vars(node).values():
+            if id(value) in seen:
+                continue
+            seen.add(id(value))
+            if isinstance(value, requests.Session):
+                found.append(value)
+            elif type(value).__module__.startswith("plane."):
+                pending.append(value)
+    return found
 
 
 def _with_retries(client: PlaneClient) -> PlaneClient:
@@ -33,11 +52,9 @@ def _with_retries(client: PlaneClient) -> PlaneClient:
         raise_on_status=False,
     )
     adapter: HTTPAdapter = HTTPAdapter(max_retries=retry)
-    for resource in vars(client).values():
-        session: Any = getattr(resource, "session", None)
-        if session is not None:
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
+    for session in _sessions(client):
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
     return client
 
 

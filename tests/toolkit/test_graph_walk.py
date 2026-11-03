@@ -248,3 +248,14 @@ def test_other_failures_still_end_the_walk_with_an_error() -> None:
 
     with pytest.raises(HttpError):
         _run(Broken({}), [Ref("a", "p1")])
+
+
+def test_an_item_whose_relations_were_rate_limited_is_cut_with_no_details() -> None:
+    class LimitedRelations(FakePlane):
+        def read_relations(self, ref: Ref) -> Buckets | None:
+            raise HttpError("Too Many Requests", 429)
+
+    found = _run(LimitedRelations({}), [Ref("a", "p1")])
+
+    assert found.cut == ["a"]
+    assert "a" not in found.details
