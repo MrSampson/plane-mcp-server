@@ -7,8 +7,38 @@ from fastmcp.server.auth.auth import AccessToken
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.utilities.logging import get_logger
 from plane import PlaneClient
+from plane.config import RetryConfig
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = get_logger(__name__)
+
+# A walk over a large module can outrun an instance's per-key rate limit several times over.
+RATE_LIMIT_RETRIES: int = 5
+RETRY_POLICY: RetryConfig = RetryConfig(total=RATE_LIMIT_RETRIES)
+
+
+def _with_retries(client: PlaneClient) -> PlaneClient:
+    """Makes every resource of `client` retry a throttled or failed request, honouring `Retry-After`.
+
+    The SDK mounts its retrying adapter only when `Configuration.retry` is set at construction,
+    and `PlaneClient` offers no way to set it, so each resource's session is given the adapter here.
+    """
+    retry: Retry = Retry(
+        total=RETRY_POLICY.total,
+        backoff_factor=RETRY_POLICY.backoff_factor,
+        status_forcelist=RETRY_POLICY.status_forcelist,
+        allowed_methods=RETRY_POLICY.allowed_methods,
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    adapter: HTTPAdapter = HTTPAdapter(max_retries=retry)
+    for resource in vars(client).values():
+        session: Any = getattr(resource, "session", None)
+        if session is not None:
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+    return client
 
 
 class PlaneClientContext(NamedTuple):
@@ -83,15 +113,9 @@ def get_plane_client_context() -> PlaneClientContext:
             access_token = token
 
     if access_token:
-        client = PlaneClient(
-            base_url=base_url,
-            access_token=access_token,
-        )
+        client = _with_retries(PlaneClient(base_url=base_url, access_token=access_token))
     else:
-        client = PlaneClient(
-            base_url=base_url,
-            api_key=api_key,
-        )
+        client = _with_retries(PlaneClient(base_url=base_url, api_key=api_key))
 
     return PlaneClientContext(
         client=client,

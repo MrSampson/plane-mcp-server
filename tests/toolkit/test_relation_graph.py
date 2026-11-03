@@ -255,3 +255,32 @@ def test_a_nameless_module_is_titled_by_its_id() -> None:
         _titled(_Client(SimpleNamespace(name="Platform"), SimpleNamespace(name=None)), module_id="m1")
         == "Platform / m1"
     )
+
+
+def test_a_rate_limited_walk_answers_what_it_read_and_says_why_the_rest_is_cut() -> None:
+    world = World({"a": (1, "p1", {}), "b": (2, "p1", {})})
+
+    def limited(ref: Ref) -> dict[str, Any] | None:
+        if ref.id == "b":
+            raise HttpError("Too Many Requests", 429)
+        return world.node(ref)
+
+    result = assemble_graph(
+        [Ref("a", "p1"), Ref("b", "p1")],
+        world.relations,
+        limited,
+        PROJECTS.get,
+        depth=1,
+        max_items=50,
+        module_id="",
+        diagram=False,
+    )
+
+    assert result["rate_limited"] is True
+    assert result["cut"] == ["b"]
+    assert [n["identifier"] for n in result["nodes"]] == ["PROJ-1", "b"]
+    assert "rate limit" in result["note"]
+
+
+def test_an_unlimited_walk_carries_no_rate_limit_marker() -> None:
+    assert "rate_limited" not in _graph(World({"a": (1, "p1", {})}), [Ref("a", "p1")])

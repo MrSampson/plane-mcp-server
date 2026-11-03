@@ -85,6 +85,12 @@ def assemble_graph(
         "truncated": found.truncated,
         "cut": [names[item_id] for item_id in found.cut],
     }
+    if found.rate_limited:
+        result["rate_limited"] = True
+        result["note"] = (
+            "The instance's rate limit stopped the walk; the items in `cut` were not read. "
+            "Wait a minute and ask again, or narrow the seed or lower depth."
+        )
     if diagram:
         result["diagram"] = mermaid(
             names,

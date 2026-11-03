@@ -90,3 +90,19 @@ def test_a_token_without_a_slug_does_not_borrow_the_environments(connected, monk
 
     assert current_workspace()["slug"] == ""
     assert get_plane_client_context().workspace_slug == ""
+
+
+def test_every_resource_session_retries_a_429(connected):
+    """The SDK mounts a retrying adapter only when `Configuration.retry` is set at
+    construction, and `PlaneClient` offers no way to set it. Without one a single
+    429 failed a whole multi-request call."""
+    connected("stdio")
+    client = get_plane_client_context().client
+
+    sessions = [r.session for r in vars(client).values() if hasattr(r, "session")]
+    assert sessions, "found no resource sessions to check"
+    for session in sessions:
+        retry = session.get_adapter("https://plane.example").max_retries
+        assert retry.total == client_module.RATE_LIMIT_RETRIES
+        assert 429 in retry.status_forcelist
+        assert retry.respect_retry_after_header
