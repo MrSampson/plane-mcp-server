@@ -284,3 +284,22 @@ def test_a_rate_limited_walk_answers_what_it_read_and_says_why_the_rest_is_cut()
 
 def test_an_unlimited_walk_carries_no_rate_limit_marker() -> None:
     assert "rate_limited" not in _graph(World({"a": (1, "p1", {})}), [Ref("a", "p1")])
+
+
+def test_a_deleted_blocker_holds_its_dependent_and_shows_as_unreadable() -> None:
+    world = World({"a": (1, "p1", {"blocked_by": [{"id": "gone", "project_id": "p1"}]})})
+
+    def node(ref: Ref) -> dict[str, Any] | None:
+        if ref.id == "gone":
+            raise HttpError("Not Found", 404)
+        return world.node(ref)
+
+    result = assemble_graph(
+        [Ref("a", "p1")], world.relations, node, PROJECTS.get, depth=1, max_items=50, module_id="", diagram=False
+    )
+
+    by_id = {n["id"]: n for n in result["nodes"]}
+    assert by_id["gone"]["unreadable"] is True
+    assert by_id["gone"]["identifier"] == "gone"
+    assert result["order"] == []
+    assert result["unordered"] == {"PROJ-1": "after_unexpanded", "gone": "unexpanded"}

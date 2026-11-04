@@ -75,6 +75,19 @@ def test_a_rate_limited_project_lookup_falls_back_to_no_identifier(spy: Any) -> 
     assert project_identifier_reader(spy, "acme")("p1") is None
 
 
+def test_a_project_that_is_gone_falls_back_to_no_identifier(spy: Any) -> None:
+    spy.returns["projects.retrieve"] = HttpError("Not Found", 404)
+
+    assert project_identifier_reader(spy, "acme")("p1") is None
+
+
+def test_a_missing_projects_route_is_an_error_not_a_missing_project(spy: Any) -> None:
+    spy.returns["projects.retrieve"] = HttpError("Not Found", 404, {"error": "Page not found."})
+
+    with pytest.raises(HttpError):
+        project_identifier_reader(spy, "acme")("p1")
+
+
 def test_module_seeds_page_through_the_module_and_stop_past_the_cap(spy: Any) -> None:
     page: SimpleNamespace = SimpleNamespace(
         results=[SimpleNamespace(id=f"wi-{n}", project="p1") for n in range(3)],

@@ -13,8 +13,9 @@ from typing import Any
 from plane.errors.errors import HttpError
 from plane.models.query_params import RetrieveQueryParams, WorkItemQueryParams
 
+from plane_mcp.toolkit.governance import route_absent
 from plane_mcp.toolkit.graph import Ordering, mermaid, order
-from plane_mcp.toolkit.graph_walk import TOO_MANY_REQUESTS, Buckets, Ref, Walk, walk
+from plane_mcp.toolkit.graph_walk import NOT_FOUND, TOO_MANY_REQUESTS, Buckets, Ref, Walk, walk
 
 FORBIDDEN: int = 403
 # State groups that no longer hold anything up: a blocker in one of them is satisfied.
@@ -35,6 +36,7 @@ def assemble_graph(
     max_items: int,
     module_id: str,
     diagram: bool,
+    required: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Walk from `seeds` and answer nodes, edges, waves, cycles and what could not be ordered.
 
@@ -47,7 +49,7 @@ def assemble_graph(
     nothing and is left out of the ordering, so what remains answers "what can be
     started now".
     """
-    found: Walk = walk(seeds, read_relations, read_node, depth, max_items)
+    found: Walk = walk(seeds, read_relations, read_node, depth, max_items, required)
     settled: set[str] = {
         item_id for item_id, detail in found.details.items() if detail.get("state_group") in SETTLED_GROUPS
     }
@@ -116,8 +118,8 @@ def node_reader(client: Any, workspace_slug: str) -> Callable[[Ref], dict[str, A
     """Reads an item's name, state and its group, priority and sequence number; None when forbidden.
 
     The state is requested expanded because a listing carries only its id. Any
-    other failure -- a 404 for an id that does not exist, say -- propagates:
-    only "you may not read this" is a fact about the graph rather than an error.
+    other failure propagates, a 404 included: whether a missing item is a wrong id or
+    a deleted neighbour depends on how the walk reached it, so `walk` decides.
     """
 
     def read(ref: Ref) -> dict[str, Any] | None:
@@ -156,9 +158,11 @@ def project_identifier_reader(client: Any, workspace_slug: str) -> IdentifierLoo
                     workspace_slug=workspace_slug, project_id=project_id
                 ).identifier
             except HttpError as exc:
-                # A rate-limited lookup must not cost the caller a graph already read: the
-                # raw project id stands in for the identifier.
-                if not (_forbidden(exc) or exc.status_code == TOO_MANY_REQUESTS):
+                # A lookup that fails must not cost the caller a graph already read: a
+                # rate limit, or a neighbour's project that is gone, falls back to the raw
+                # project id. A routing 404 is an error, not a missing project.
+                gone: bool = exc.status_code == NOT_FOUND and not route_absent(exc)
+                if not (_forbidden(exc) or exc.status_code == TOO_MANY_REQUESTS or gone):
                     raise
                 cache[project_id] = None
         return cache[project_id]

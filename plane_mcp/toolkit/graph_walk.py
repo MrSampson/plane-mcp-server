@@ -19,6 +19,7 @@ from typing import Any
 
 from plane.errors.errors import HttpError
 
+from plane_mcp.toolkit.governance import route_absent
 from plane_mcp.toolkit.graph import Edge, dedupe, edges_from_relations, related_projects
 
 Buckets = Mapping[str, list[Mapping[str, Any]]]
@@ -40,8 +41,8 @@ class Walk:
     """What was read, and what was not.
 
     `unexpanded` holds every item whose own relations were not read: those past
-    `depth`, those cut by `max_items` or by a rate limit, and those the caller may not
-    read. `rate_limited` says the walk stopped because the instance refused further
+    `depth`, those cut by `max_items` or by a rate limit, those the caller may not read,
+    and those that no longer exist. `rate_limited` says the walk stopped because the instance refused further
     requests, not because a bound was reached.
     """
 
@@ -64,6 +65,7 @@ def walk(
     read_node: Callable[[Ref], dict[str, Any] | None],
     depth: int,
     max_items: int,
+    required: frozenset[str] | None = None,
 ) -> Walk:
     """Breadth-first over ordering relations; `None` from a reader means unreadable.
 
@@ -72,6 +74,11 @@ def walk(
     items: following `relates_to` would pull in neighbours that cannot affect the
     order, at a call each. A plain relation is kept only if both its ends were
     reached some other way.
+
+    `required` names the seeds the caller asked for by id: a 404 on one is a wrong id and
+    raises. A 404 on any other item -- one reached through a relation, or a member of a
+    module -- is a fact about the graph (the item was deleted) and shows it as unreadable.
+    It defaults to every seed.
     """
     result: Walk = Walk()
     pending: deque[tuple[Ref, int]] = deque()
@@ -80,7 +87,7 @@ def walk(
             result.refs[seed.id] = seed.project_id
             pending.append((seed, 0))
 
-    seed_ids: set[str] = {seed.id for seed in seeds}
+    must_exist: frozenset[str] = frozenset(seed.id for seed in seeds) if required is None else required
     read: int = 0
     while pending:
         ref: Ref
@@ -120,10 +127,10 @@ def walk(
                     result.refs[other] = projects.get(other, ref.project_id)
                     pending.append((Ref(other, result.refs[other]), hops + 1))
         except HttpError as exc:
-            if exc.status_code == NOT_FOUND and ref.id not in seed_ids:
-                # A relation can outlive the item it names. That is a fact about the
-                # graph, so the item is shown as unreadable; a missing seed is a wrong
-                # id, which the caller must hear about.
+            if exc.status_code == NOT_FOUND and not route_absent(exc) and ref.id not in must_exist:
+                # A relation or module can outlive an item it names. That is a fact about
+                # the graph, so the item is shown as unreadable. A routing 404 is the
+                # instance lacking the endpoint, never a deleted item.
                 result.unreadable.add(ref.id)
                 result.unexpanded.add(ref.id)
                 continue

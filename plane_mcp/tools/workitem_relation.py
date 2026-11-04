@@ -366,6 +366,7 @@ def _graph(
         max_items=limit,
         module_id=module_id,
         diagram=format == GraphFormat.MERMAID,
+        required=frozenset({workitem_id}) if workitem_id else frozenset(),
     )
     if format in (GraphFormat.HTML, GraphFormat.HTML_FILE):
         _attach_page(

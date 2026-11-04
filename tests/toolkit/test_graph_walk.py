@@ -300,3 +300,43 @@ def test_a_neighbour_whose_relations_are_missing_is_unreadable() -> None:
     found = _run(RelationsGone({"a": _blocks("b")}), [Ref("a", "p1")], depth=2)
 
     assert found.unreadable == {"b"}
+
+
+def test_a_member_of_a_module_that_is_gone_is_unreadable_when_not_required() -> None:
+    plane = MissingPlane({}, missing={"gone"})
+
+    found = walk(
+        [Ref("a", "p1"), Ref("gone", "p1")], plane.read_relations, plane.read_node, 1, 50, required=frozenset()
+    )
+
+    assert found.unreadable == {"gone"}
+    assert "a" in found.details
+
+
+def test_a_required_seed_that_is_gone_still_raises() -> None:
+    plane = MissingPlane({}, missing={"gone"})
+
+    with pytest.raises(HttpError) as raised:
+        walk([Ref("gone", "p1")], plane.read_relations, plane.read_node, 1, 50, required=frozenset({"gone"}))
+
+    assert raised.value.status_code == 404
+
+
+def test_a_missing_relations_route_is_not_mistaken_for_a_deleted_item() -> None:
+    class NoRoute(FakePlane):
+        def read_relations(self, ref: Ref) -> Buckets | None:
+            if ref.id == "b":
+                raise HttpError("Not Found", 404, {"error": "Page not found."})
+            return super().read_relations(ref)
+
+    with pytest.raises(HttpError):
+        _run(NoRoute({"a": _blocks("b")}), [Ref("a", "p1")], depth=2)
+
+
+def test_a_seed_whose_relations_are_missing_still_raises() -> None:
+    class RelationsGone(FakePlane):
+        def read_relations(self, ref: Ref) -> Buckets | None:
+            raise HttpError("Not Found", 404)
+
+    with pytest.raises(HttpError):
+        _run(RelationsGone({}), [Ref("a", "p1")])
