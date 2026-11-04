@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import pytest
+from plane.errors.errors import HttpError
+
 from plane_mcp.toolkit.graph import Edge, EdgeType
 from plane_mcp.toolkit.graph_walk import Ref, Walk, walk
 
@@ -207,3 +210,52 @@ def test_the_boundary_and_the_cap_together_leave_cut_items_unexpanded() -> None:
 
     assert result.cut == ["c"]
     assert result.unexpanded == {"b", "c"}
+
+
+class RateLimitedPlane(FakePlane):
+    """Answers 429 for node reads from the `limited_at`-th onwards."""
+
+    def __init__(self, relations: Mapping[str, Buckets], limited_at: int) -> None:
+        super().__init__(relations)
+        self.limited_at: int = limited_at
+
+    def read_node(self, ref: Ref) -> dict[str, Any] | None:
+        if len(self.node_reads) >= self.limited_at:
+            raise HttpError("Too Many Requests", 429)
+        return super().read_node(ref)
+
+
+def test_a_rate_limit_ends_the_walk_with_what_was_read_and_cuts_the_rest() -> None:
+    plane = RateLimitedPlane({"a": _blocks("b"), "b": _blocks("c")}, limited_at=2)
+
+    found = _run(plane, [Ref("a", "p1")], depth=5)
+
+    assert set(found.details) == {"a", "b"}
+    assert found.cut == ["c"]
+    assert found.truncated
+    assert found.rate_limited
+    assert "c" in found.unexpanded
+
+
+def test_a_walk_that_is_never_limited_says_so() -> None:
+    assert not _run(FakePlane({}), [Ref("a", "p1")]).rate_limited
+
+
+def test_other_failures_still_end_the_walk_with_an_error() -> None:
+    class Broken(FakePlane):
+        def read_node(self, ref: Ref) -> dict[str, Any] | None:
+            raise HttpError("boom", 500)
+
+    with pytest.raises(HttpError):
+        _run(Broken({}), [Ref("a", "p1")])
+
+
+def test_an_item_whose_relations_were_rate_limited_is_cut_with_no_details() -> None:
+    class LimitedRelations(FakePlane):
+        def read_relations(self, ref: Ref) -> Buckets | None:
+            raise HttpError("Too Many Requests", 429)
+
+    found = _run(LimitedRelations({}), [Ref("a", "p1")])
+
+    assert found.cut == ["a"]
+    assert "a" not in found.details

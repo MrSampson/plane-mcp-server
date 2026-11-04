@@ -14,7 +14,7 @@ from plane.errors.errors import HttpError
 from plane.models.query_params import RetrieveQueryParams, WorkItemQueryParams
 
 from plane_mcp.toolkit.graph import Ordering, mermaid, order
-from plane_mcp.toolkit.graph_walk import Buckets, Ref, Walk, walk
+from plane_mcp.toolkit.graph_walk import TOO_MANY_REQUESTS, Buckets, Ref, Walk, walk
 
 FORBIDDEN: int = 403
 # State groups that no longer hold anything up: a blocker in one of them is satisfied.
@@ -85,6 +85,12 @@ def assemble_graph(
         "truncated": found.truncated,
         "cut": [names[item_id] for item_id in found.cut],
     }
+    if found.rate_limited:
+        result["rate_limited"] = True
+        result["note"] = (
+            "The instance's rate limit stopped the walk; the items in `cut` were not read. "
+            "Wait a minute and ask again, or narrow the seed or lower depth."
+        )
     if diagram:
         result["diagram"] = mermaid(
             names,
@@ -150,7 +156,9 @@ def project_identifier_reader(client: Any, workspace_slug: str) -> IdentifierLoo
                     workspace_slug=workspace_slug, project_id=project_id
                 ).identifier
             except HttpError as exc:
-                if not _forbidden(exc):
+                # A rate-limited lookup must not cost the caller a graph already read: the
+                # raw project id stands in for the identifier.
+                if not (_forbidden(exc) or exc.status_code == TOO_MANY_REQUESTS):
                     raise
                 cache[project_id] = None
         return cache[project_id]
