@@ -24,6 +24,7 @@ from plane_mcp.toolkit.graph import Edge, dedupe, edges_from_relations, related_
 Buckets = Mapping[str, list[Mapping[str, Any]]]
 
 TOO_MANY_REQUESTS: int = 429
+NOT_FOUND: int = 404
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ def walk(
             result.refs[seed.id] = seed.project_id
             pending.append((seed, 0))
 
+    seed_ids: set[str] = {seed.id for seed in seeds}
     read: int = 0
     while pending:
         ref: Ref
@@ -118,6 +120,13 @@ def walk(
                     result.refs[other] = projects.get(other, ref.project_id)
                     pending.append((Ref(other, result.refs[other]), hops + 1))
         except HttpError as exc:
+            if exc.status_code == NOT_FOUND and ref.id not in seed_ids:
+                # A relation can outlive the item it names. That is a fact about the
+                # graph, so the item is shown as unreadable; a missing seed is a wrong
+                # id, which the caller must hear about.
+                result.unreadable.add(ref.id)
+                result.unexpanded.add(ref.id)
+                continue
             if exc.status_code != TOO_MANY_REQUESTS:
                 raise
             # The client's own retries are spent: keep what was read, and report the item

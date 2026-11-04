@@ -259,3 +259,44 @@ def test_an_item_whose_relations_were_rate_limited_is_cut_with_no_details() -> N
 
     assert found.cut == ["a"]
     assert "a" not in found.details
+
+
+class MissingPlane(FakePlane):
+    """Answers 404 for node reads of the ids in `missing`."""
+
+    def __init__(self, relations: Mapping[str, Buckets], missing: set[str]) -> None:
+        super().__init__(relations)
+        self.missing: set[str] = missing
+
+    def read_node(self, ref: Ref) -> dict[str, Any] | None:
+        if ref.id in self.missing:
+            raise HttpError("Not Found", 404)
+        return super().read_node(ref)
+
+
+def test_a_deleted_neighbour_is_unreadable_and_the_walk_goes_on() -> None:
+    plane = MissingPlane({"a": {**_blocks("gone"), "blocked_by": [{"id": "c"}]}}, missing={"gone"})
+
+    found = _run(plane, [Ref("a", "p1")])
+
+    assert found.unreadable == {"gone"}
+    assert "gone" in found.unexpanded
+    assert "c" in found.details
+    assert not found.truncated
+
+
+def test_a_missing_seed_is_still_an_error() -> None:
+    with pytest.raises(HttpError):
+        _run(MissingPlane({}, missing={"a"}), [Ref("a", "p1")])
+
+
+def test_a_neighbour_whose_relations_are_missing_is_unreadable() -> None:
+    class RelationsGone(FakePlane):
+        def read_relations(self, ref: Ref) -> Buckets | None:
+            if ref.id == "b":
+                raise HttpError("Not Found", 404)
+            return super().read_relations(ref)
+
+    found = _run(RelationsGone({"a": _blocks("b")}), [Ref("a", "p1")], depth=2)
+
+    assert found.unreadable == {"b"}
