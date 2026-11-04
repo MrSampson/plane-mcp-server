@@ -39,7 +39,7 @@ This helps us triage and manage issues more efficiently.
 
 ### Requirements
 
-- Python 3.10+
+- Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (fast Python package installer)
 - A Plane instance (cloud or self-hosted) with an API key for testing
 
@@ -87,7 +87,7 @@ To ensure consistency throughout the source code, please keep these rules in min
 
 - All features or bug fixes must be tested by one or more specs (unit-tests).
 - We format and lint with [Ruff](https://docs.astral.sh/ruff/) (rules: E, F, I, UP, B; line length: 120).
-- Use Python 3.10+ union syntax (`str | None` instead of `Optional[str]`).
+- Use Python 3.11+ union syntax (`str | None` instead of `Optional[str]`).
 - Tool functions must follow the existing pattern: use `@mcp.tool()` decorator, accept typed parameters, and return Pydantic models from `plane-sdk`.
 - Include docstrings with `Args` and `Returns` sections for all new tools.
 
@@ -112,7 +112,7 @@ pytest
 ```
 
 CI (`.github/workflows/test.yml`) runs these same checks on every push and pull
-request against `main`: `pytest` on Python 3.10 through 3.14 with a coverage
+request against `main`: `pytest` on Python 3.11 through 3.14 with a coverage
 floor, plus `ruff check` and `ruff format --check`.
 
 ## Ways to contribute

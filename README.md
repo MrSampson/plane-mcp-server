@@ -34,7 +34,7 @@ Add this to your MCP client's configuration:
 }
 ```
 
-`uvx` needs no install step. Requires Python 3.10+.
+`uvx` needs no install step. Requires Python 3.11+.
 
 For a self-hosted Plane, add `"PLANE_BASE_URL": "https://plane.example.com"`.
 
@@ -278,7 +278,7 @@ Pull requests welcome. Please run `pytest`, `ruff check`, and `ruff format --che
 before submitting; new tools should come with the invariants described in
 [`plane_mcp/tools/README.md`](plane_mcp/tools/README.md).
 
-CI runs the suite on Python 3.10 through 3.14, lints with `ruff`, and enforces a
+CI runs the suite on Python 3.11 through 3.14, lints with `ruff`, and enforces a
 coverage floor — see [`.github/workflows/test.yml`](.github/workflows/test.yml).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

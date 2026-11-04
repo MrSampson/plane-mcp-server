@@ -93,7 +93,7 @@ Where a resource exists at both project and workspace scope, it resolves that on
 
 **Retired names.** Before consolidation this server exposed 177 tools, one per operation. 169 of those names still resolve, via a `Transform` mapping each to its `(tool, action)` pair with `action` hidden, and keeping the parameter spelling they shipped with (`work_item_id`, not `workitem_id`). The transforms implement `list_tools`/`get_tool` only — execution keeps the full schema, so tool results are unchanged, and nothing is advertised so the listing is unaffected. Seven encoded their action in a parameter and are declared in `LEGACY_UNMAPPED` with a replacement. `tests/tools/_retired_names.py` is the frozen record of all 177.
 
-Tools return Pydantic models from `plane-sdk` and use Python 3.10+ union syntax (`str | None`).
+Tools return Pydantic models from `plane-sdk` and use Python 3.11+ union syntax (`str | None`).
 
 ### Toolkit (`toolkit/`)
 
