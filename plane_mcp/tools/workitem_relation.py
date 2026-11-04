@@ -162,7 +162,7 @@ ACTIONS = (
         "first is startable now), cycles, and unordered (items that cannot be placed, with the reason); "
         "completed and cancelled items are flagged settled: they stay in nodes and edges but block nothing "
         "and are left out of order; a boundary node was reached but its own relations were not read, an "
-        "unreadable one may not be read by this token; "
+        "unreadable one may not be read by this token or no longer exists; "
         "pass exactly one of workitem_id or module_id as the seed; depth is how many hops beyond the "
         "seed are read (default 1; 0 expands the seed only: its neighbours are shown as boundary nodes); "
         "max_items caps items read (default 50, at most 150), and "
@@ -366,6 +366,7 @@ def _graph(
         max_items=limit,
         module_id=module_id,
         diagram=format == GraphFormat.MERMAID,
+        required=frozenset({workitem_id}) if workitem_id else frozenset(),
     )
     if format in (GraphFormat.HTML, GraphFormat.HTML_FILE):
         _attach_page(
